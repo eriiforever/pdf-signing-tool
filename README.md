@@ -4,6 +4,8 @@
 
 `v2.2` · Windows · MIT · 仓库内不含任何真实印章、图纸、单位或项目信息
 
+[下载 v2.2 程序](https://github.com/eriiforever/pdf-signing-tool/releases/download/v2.2/PDFStamp-v2.2.exe) · [下载 AI 技能包](https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip) · [所有版本](https://github.com/eriiforever/pdf-signing-tool/releases)
+
 ## 能做什么
 
 - 整幅章图层 1:1 叠加：不裁剪、不缩放、不旋转，章在图层内的相对位置原样保留
@@ -16,16 +18,16 @@
 
 | 版本 | 形态 | 说明 |
 |---|---|---|
-| v1.0 | 网页版 | 本地 HTTP 服务 + 内嵌 HTML + 浏览器；单文件 exe。已知问题：文件框层级、输出目录、关窗行为 |
-| v2.0 | 独立窗口 | 首次脱离浏览器，tkinter 原生窗口 + pypdf，单文件 exe，目标机无需 Python |
-| v2.1 | 稳定版 | 同目录章自动发现、同名文件三策略、完成后打开输出文件夹、日志区弹性布局 |
-| **v2.2** | **当前** | 窗口内直接拖入 PDF / 文件夹；零依赖 AI 技能；版本号写入文件属性 |
+| [v1.0](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v1.0) | 网页版 | 本地 HTTP 服务 + 内嵌 HTML + 浏览器；单文件 exe。已知问题：文件框层级、输出目录、关窗行为 |
+| [v2.0](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.0) | 独立窗口 | 首次脱离浏览器，tkinter 原生窗口 + pypdf，单文件 exe，目标机无需 Python |
+| [v2.1](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.1) | 稳定版 | 同目录章自动发现、同名文件三策略、完成后打开输出文件夹、日志区弹性布局 |
+| **[v2.2](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.2)** | **当前** | 窗口内直接拖入 PDF / 文件夹；零依赖 AI 技能；版本号写入文件属性 |
 
 各版本的变更明细见 [CHANGELOG.md](CHANGELOG.md)，发布说明在 `releases/`，已停止维护的实现在 `history/`。
 
 ## 快速开始
 
-**直接用**：下载 v2.2 Release 附件 `PDFStamp-v2.2.exe`，双击运行；把 PDF 或文件夹拖进窗口即可添加。
+**直接用**：下载 [PDFStamp-v2.2.exe](https://github.com/eriiforever/pdf-signing-tool/releases/download/v2.2/PDFStamp-v2.2.exe)，双击运行；把 PDF 或文件夹拖进窗口即可添加。其它版本见 [Releases](https://github.com/eriiforever/pdf-signing-tool/releases)。
 
 **从源码运行**：
 
@@ -46,7 +48,7 @@ python src/stamp_gui.py
 
 | 安装包 | 版本 | 更新 | 适配 |
 |---|---|---|---|
-| `pdf-seal-stamp-lite-skill.zip`（9.7 KB） | 1.0.0 | 2026-11-08 | Windows / macOS / Linux，Python 3.9+ |
+| [`pdf-seal-stamp-lite-skill.zip`](https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip)（9.7 KB） | 1.0.0 | 2026-11-08 | Windows / macOS / Linux，Python 3.9+ |
 
 ### 让 AI 助手帮你装（推荐）
 
