@@ -718,7 +718,7 @@ def run_gui(preset_files=None, selftest=False):
                     self.q.put(("log", "    -> {}  ({} 页)".format(dst, n)))
                     ok += 1
                     self.q.put(("progress", k * 100.0 / total))
-                self.q.put(("done", ok, out_dirs))
+                self.q.put(("done", (ok, out_dirs)))   # 统一 2 元组，poll 里按 kind, payload 解包
             except Exception:
                 self.q.put(("error", traceback.format_exc()))
 
@@ -754,11 +754,30 @@ def run_gui(preset_files=None, selftest=False):
                         self.mb.showerror("出错", payload.splitlines()[-1])
             except queue.Empty:
                 pass
-            self.root.after(100, self.poll)
+            except Exception as e:
+                # 任何意外都不得让轮询停摆，也不能把窗口锁死在 busy 状态
+                self.busy = False
+                try:
+                    self.go.configure(state="normal")
+                except Exception:
+                    pass
+                try:
+                    self.log("界面异常已自动恢复：{}".format(e))
+                except Exception:
+                    pass
+            finally:
+                try:
+                    self.root.after(100, self.poll)
+                except Exception:
+                    pass
 
         def on_close(self):
             if self.busy:
-                self.mb.showinfo("正在盖章", "请等待当前批次完成再关闭窗口。")
+                # 给一个强制出口，避免异常情况下永远关不掉窗口
+                if self.mb.askyesno(
+                        "正在盖章",
+                        "当前批次尚未确认结束。\n\n若日志显示已全部盖章完成，可强制退出。\n\n确定强制退出吗？"):
+                    self.root.destroy()
                 return
             self.root.destroy()
 
@@ -772,6 +791,12 @@ def run_gui(preset_files=None, selftest=False):
         status = ["VER v{}".format(VERSION), "GUI OK", "LAYOUT req=%d win=%d log=%d" % (
             root.winfo_reqheight(), app.win_h, app.txt.winfo_height())]
         status.append("TITLE=" + root.title())
+        # 完成事件回归：模拟 worker 发出 done，验证 busy 与按钮被正确复位、窗口可关闭
+        app.busy = True
+        app.go.configure(state="disabled")
+        app.q.put(("done", (2, [])))
+        app.poll()
+        status.append("DONE OK busy=%s go=%s" % (app.busy, str(app.go["state"])))
         try:                                  # 真实跑一遍盖章链路，验证 exe 内依赖完整
             import tempfile
             seals = list_seals()
