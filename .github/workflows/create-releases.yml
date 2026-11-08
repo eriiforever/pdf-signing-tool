@@ -20,7 +20,8 @@ jobs:
         run: |
           for v in v1.0 v2.0 v2.1; do
             if gh release view "$v" >/dev/null 2>&1; then
-              echo "$v already exists"
+              gh release edit "$v" --notes-file "releases/$v.md"
+              echo "$v notes synced"
             else
               gh release create "$v" --title "$v" --notes-file "releases/$v.md" --target main
               echo "created $v"
