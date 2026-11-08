@@ -241,27 +241,35 @@ def enable_file_drop(root, on_paths):
         WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, HWND, ctypes.c_uint,
                                      wintypes.WPARAM, wintypes.LPARAM)
         old = u.GetWindowLongPtrW(hwnd, GWL_WNDPROC)
+        # 关键：窗口过程运行在 Windows 消息循环里，这里绝不能调用 Tk/Tcl
+        # （after_idle 等会重入解释器直接崩溃）。只入队，由 Tk 侧的 poll 消费。
+        pending = []
 
         def proc(h, msg, wp, lp):
             if msg == WM_DROPFILES:
-                hdrop = ctypes.c_void_p(wp)
-                paths = []
-                count = s.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
-                for i in range(count):
-                    buf = ctypes.create_unicode_buffer(1024)
-                    s.DragQueryFileW(hdrop, i, buf, 1024)
-                    paths.append(buf.value)
-                s.DragFinish(hdrop)
                 try:
-                    root.after_idle(lambda: on_paths(paths))
+                    hdrop = ctypes.c_void_p(wp)
+                    paths = []
+                    count = s.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+                    for i in range(count):
+                        buf = ctypes.create_unicode_buffer(2048)
+                        s.DragQueryFileW(hdrop, i, buf, 2048)
+                        if buf.value:
+                            paths.append(buf.value)
+                    s.DragFinish(hdrop)
+                    pending.extend(paths)          # 纯 Python 层，不触碰 Tcl
                 except Exception:
                     pass
                 return 0
-            return u.CallWindowProcW(ctypes.c_void_p(old), h, msg, wp, lp)
+            try:
+                return u.CallWindowProcW(ctypes.c_void_p(old), h, msg, wp, lp)
+            except Exception:
+                return 0
 
         cb = WNDPROC(proc)
         u.SetWindowLongPtrW(hwnd, GWL_WNDPROC, ctypes.cast(cb, ctypes.c_void_p))
-        return {"hwnd": hwnd, "old": old, "callback": cb, "dispatch": proc}
+        return {"hwnd": hwnd, "old": old, "callback": cb,
+                "dispatch": proc, "pending": pending}
     except Exception:
         return None
 
@@ -810,6 +818,18 @@ def run_gui(preset_files=None, selftest=False):
                 self.q.put(("error", traceback.format_exc()))
 
         def poll(self):
+            # 先消费窗口拖放进来的路径（在 Tk 主循环里处理，窗口过程只负责入队）
+            dnd = getattr(self, "_dnd", None)
+            if dnd and dnd["pending"]:
+                paths = dnd["pending"][:]
+                dnd["pending"].clear()
+                try:
+                    self.on_drop_files(paths)
+                except Exception as e:
+                    try:
+                        self.log("拖入文件处理失败：{}".format(e))
+                    except Exception:
+                        pass
             try:
                 while True:
                     kind, payload = self.q.get_nowait()
@@ -917,8 +937,13 @@ def run_gui(preset_files=None, selftest=False):
                 df.fWide = 1
                 ctypes.memmove(ptr + ctypes.sizeof(DROPFILES), raw, len(raw))
                 k.GlobalUnlock(hg)
-                dnd["dispatch"](dnd["hwnd"], 0x0233, hg, 0)
+                # 用 PostMessage 走真实消息循环，比直接调用回调更接近实际拖放
+                pm = ctypes.windll.user32.PostMessageW
+                pm.argtypes = [ctypes.c_void_p, ctypes.c_uint,
+                               ctypes.c_size_t, ctypes.c_ssize_t]
+                pm(dnd["hwnd"], 0x0233, hg, 0)
                 root.update()
+                app.poll()                     # 由 Tk 侧消费 pending 队列
                 status.append("DROP OK files=%d" % len(app.files))
             except Exception as e:
                 status.append("DROP FAIL %s" % e)
