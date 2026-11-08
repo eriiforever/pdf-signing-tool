@@ -24,13 +24,18 @@ PDF 盖章工具 · 图形界面版 v2.2
 """
 
 import argparse
+import csv
 import glob
 import io
+import json
 import os
 import queue
+import re
 import shutil
 import sys
+import tempfile
 import threading
+import time
 import traceback
 
 FROZEN = getattr(sys, "frozen", False)   # PyInstaller 打包后的单文件 exe
@@ -58,8 +63,21 @@ STAMPED_DIRNAME = "已签章"
 BACKUP_DIRNAME = "_未盖章原件"
 SEALS_DIR = os.path.join(APP_DIR, "seals")
 BUILTIN_SEAL = os.path.join(BUNDLE_DIR, "示意章-测试.pdf")
+CONFIG_PATH = os.path.join(APP_DIR, "stamp_config.json")
 PAGE_ALL, PAGE_FIRST = "all", "first"
-VERSION = "2.2"                          # 同步维护 version_info.txt 中的文件版本
+VERSION = "3.0"                          # 同步维护 version_info.txt 中的文件版本
+
+DEFAULT_CONFIG = {
+    "seal": "",             # 上次使用的章图层
+    "pages": PAGE_ALL,      # all / first / 自定义
+    "out": "stamped",       # stamped / overwrite / custom
+    "exists": "overwrite",  # overwrite / ask / rename
+    "dx": 0.0,              # 章位微调（pt，正=右 / 上）
+    "dy": 0.0,
+    "skip_stamped": False,  # 跳过已经盖过这枚章的页（默认关闭，由用户勾选）
+    "seal_pages": {},       # 每个章文件记住的页码策略
+    "check_update": True,   # 启动时检查新版本
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -153,6 +171,68 @@ def default_seal():
     if not seals:
         raise RuntimeError("seals 目录里没有章 PDF。请把整幅透明章图层放进：{}".format(SEALS_DIR))
     return seals[0]
+
+
+def load_config():
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            for k in cfg:
+                if k in data:
+                    cfg[k] = data[k]
+    except Exception:
+        pass
+    return cfg
+
+
+def save_config(cfg):
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def seal_markers(seal_page):
+    """章图层 XObject 的结构指纹（图像宽高 / Form BBox），用于识别"这页已经盖过这枚章"。"""
+    res = deref(seal_page.get("/Resources"))
+    xobjs = deref(res.get("/XObject")) if res else None
+    marks = []
+    for name in (xobjs or {}):
+        obj = deref(xobjs[name])
+        sub = str(deref(obj.get("/Subtype")))
+        if sub == "/Image":
+            marks.append((sub, int(obj.get("/Width", 0)), int(obj.get("/Height", 0))))
+        elif sub == "/Form":
+            bb = deref(obj.get("/BBox"))
+            marks.append((sub, tuple(round(float(v), 1) for v in bb) if bb else ()))
+        else:
+            marks.append((sub,))
+    return marks
+
+
+def page_has_any_marker(page, markers):
+    """页面资源里是否已存在这些章指纹之一。"""
+    if not markers:
+        return False
+    res = deref(page.get("/Resources"))
+    xobjs = deref(res.get("/XObject")) if res else None
+    if not xobjs:
+        return False
+    have = []
+    for name in xobjs:
+        obj = deref(xobjs[name])
+        sub = str(deref(obj.get("/Subtype")))
+        if sub == "/Image":
+            have.append((sub, int(obj.get("/Width", 0)), int(obj.get("/Height", 0))))
+        elif sub == "/Form":
+            bb = deref(obj.get("/BBox"))
+            have.append((sub, tuple(round(float(v), 1) for v in bb) if bb else ()))
+        else:
+            have.append((sub,))
+    return any(m in have for m in markers)
 
 
 def xobj_names(page):
@@ -286,6 +366,53 @@ def restore_file_drop(dnd):
         pass
 
 
+def render_preview(src, seal_bytes, dx=0.0, dy=0.0, max_width=900):
+    """生成首页叠章预览 PNG。需要 pypdfium2，缺失时返回 None（其它功能不受影响）。"""
+    try:
+        import pypdfium2 as pdfium
+    except Exception:
+        return None
+    td = tempfile.mkdtemp(prefix="stamp_preview_")
+    try:
+        tmp_pdf, _, _, _ = stamp_file(
+            src, seal_bytes, PAGE_FIRST, "custom", td, log=lambda m: None,
+            dx=dx, dy=dy, skip_stamped=False)
+        doc = pdfium.PdfDocument(tmp_pdf)
+        page = doc[0]
+        width = float(page.get_size()[0]) or 1.0
+        scale = max(0.15, min(2.0, float(max_width) / width))
+        img = page.render(scale=scale).to_pil()
+        out = os.path.join(tempfile.gettempdir(), "stamp_preview.png")
+        img.save(out)
+        doc.close()
+        return out
+    except Exception:
+        return None
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+
+def check_update(current_version, timeout=6):
+    """查询 GitHub 最新正式版，有新版本返回版本号，否则/失败返回 None。"""
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            "https://api.github.com/repos/eriiforever/pdf-signing-tool/releases/latest",
+            headers={"User-Agent": "pdf-seal-stamper/" + current_version})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        tag = str(data.get("tag_name", "")).strip().lstrip("vV")
+        if not tag:
+            return None
+
+        def key(v):
+            nums = [int(x) for x in re.findall(r"\d+", v)[:3]]
+            return tuple(nums + [0] * (3 - len(nums)))
+        return tag if key(tag) > key(current_version) else None
+    except Exception:
+        return None
+
+
 def expand_files(items):
     """拖拽 / 命令行参数展开成 PDF 列表，支持目录。"""
     out = []
@@ -330,8 +457,9 @@ def output_path(src, out_mode, custom_dir, exists_mode="overwrite"):
 
 
 def stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir, log=print,
-              exists_mode="overwrite"):
-    """盖一个 PDF，返回 (输出路径, 页数, 逐页放置记录)。"""
+              exists_mode="overwrite", dx=0.0, dy=0.0, skip_stamped=False,
+              markers=None):
+    """盖一个 PDF，返回 (输出路径, 页数, 逐页放置记录, 被跳过的已盖章页)。"""
     name = os.path.basename(src)
     with open(src, "rb") as f:
         data = f.read()                    # 先读进内存，避免 Windows 文件占用
@@ -346,18 +474,27 @@ def stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir, log=print,
     log("    章图层 {:.2f} x {:.2f} pt | 共 {} 页".format(sw, sh, len(doc.pages)))
 
     idxs = set(parse_pages(pages_spec, len(doc.pages)))
+    if markers is None:
+        markers = seal_markers(seal_page)
     writer = PdfWriter()
     placements = []
     added_by_page = {}
+    skipped = []
     for i, page in enumerate(doc.pages):
         if i not in idxs:
             writer.add_page(page)
             recompress(writer.pages[-1])
             continue
+        if skip_stamped and page_has_any_marker(page, markers):
+            writer.add_page(page)
+            recompress(writer.pages[-1])
+            skipped.append(i + 1)
+            log("    p{:<3d} 已有该章，跳过".format(i + 1))
+            continue
         pw, ph = float(page.mediabox.width), float(page.mediabox.height)
-        # 整幅图层右下角对齐页面右下角；不缩放、不裁剪、不旋转
-        tx = (pw - sw) + float(page.mediabox.left) - sx0
-        ty = (ph - sh) + float(page.mediabox.bottom) - sy0
+        # 整幅图层右下角对齐页面右下角；不缩放、不裁剪、不旋转；dx/dy 为微调
+        tx = (pw - sw) + float(page.mediabox.left) - sx0 + float(dx)
+        ty = (ph - sh) + float(page.mediabox.bottom) - sy0 + float(dy)
         rot = int(deref(page.get("/Rotate")) or 0)
         before = xobj_names(page)
         page.merge_transformed_page(
@@ -396,31 +533,41 @@ def stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir, log=print,
         check = PdfReader(io.BytesIO(f.read()))
     if len(check.pages) != len(doc.pages):
         raise RuntimeError("校验失败：页数不一致 {}".format(name))
-    bad = [i + 1 for i in sorted(idxs)
+    effective = [i for i in sorted(idxs) if (i + 1) not in skipped]
+    bad = [i + 1 for i in effective
            if not page_has_seal(check.pages[i], added_by_page.get(i, set()))]
     if bad:
         raise RuntimeError("校验失败：第 {} 页未见章图层 {}".format(bad, name))
-    unnamed = [i + 1 for i in sorted(idxs) if not added_by_page.get(i)]
+    unnamed = [i + 1 for i in effective if not added_by_page.get(i)]
+    if skipped:
+        log("    跳过 {} 页已盖章：{}".format(len(skipped), skipped))
     if unnamed:
         log("    校验通过：{} 页；第 {} 页为纯内容流章，仅完成页数校验".format(
             len(check.pages), unnamed))
     else:
         log("    校验通过：{} 页，{} 个盖章页均检出章图层对象".format(
-            len(check.pages), len(idxs)))
-    return dst, len(check.pages), placements
+            len(check.pages), len(effective)))
+    return dst, len(check.pages), placements, skipped
 
 
 def batch(files, seal_path, pages_spec, out_mode, custom_dir, log=print,
-          exists_mode="overwrite"):
+          exists_mode="overwrite", dx=0.0, dy=0.0, skip_stamped=False):
     with open(seal_path, "rb") as f:
         seal_bytes = f.read()
+    try:
+        markers = seal_markers(PdfReader(io.BytesIO(seal_bytes)).pages[0])
+    except Exception:
+        markers = None
     ok, fail = 0, []
     for k, src in enumerate(files, 1):
         log("[{}/{}] {}".format(k, len(files), os.path.basename(src)))
         try:
-            dst, n, _ = stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir,
-                                  log, exists_mode=exists_mode)
-            log("    -> {}  ({} 页)".format(dst, n))
+            dst, n, _, skipped = stamp_file(
+                src, seal_bytes, pages_spec, out_mode, custom_dir,
+                log, exists_mode=exists_mode, dx=dx, dy=dy,
+                skip_stamped=skip_stamped, markers=markers)
+            log("    -> {}  ({} 页{})".format(
+                dst, n, "，跳过 {} 页".format(len(skipped)) if skipped else ""))
             ok += 1
         except Exception as e:
             fail.append((src, str(e)))
@@ -449,6 +596,10 @@ def run_cli(argv):
     ap.add_argument("--dir", help="--out custom 时的输出目录")
     ap.add_argument("--exists", default="overwrite", choices=["overwrite", "rename"],
                      help="同名文件：overwrite=直接覆盖(默认) / rename=自动加后缀")
+    ap.add_argument("--dx", type=float, default=0.0, help="章位水平微调（pt，正=右）")
+    ap.add_argument("--dy", type=float, default=0.0, help="章位垂直微调（pt，正=上）")
+    ap.add_argument("--skip-stamped", action=argparse.BooleanOptionalAction,
+                     default=False, help="跳过已盖过这枚章的页（默认关）")
     args = ap.parse_args(argv)
 
     files = expand_files(args.files)
@@ -461,9 +612,11 @@ def run_cli(argv):
             raise RuntimeError("章 PDF 不存在：" + seal)
         log = print
         log("章：{}".format(seal))
-        log("输出：{} | 页码：{} | 同名：{}".format(args.out, args.pages, args.exists))
+        log("输出：{} | 页码：{} | 同名：{} | 微调：({}, {}) | 跳过已盖：{}".format(
+            args.out, args.pages, args.exists, args.dx, args.dy, args.skip_stamped))
         _, fail = batch(files, seal, args.pages, args.out, args.dir, log,
-                        exists_mode=args.exists)
+                        exists_mode=args.exists, dx=args.dx, dy=args.dy,
+                        skip_stamped=args.skip_stamped)
         return 1 if fail else 0
     except Exception:
         traceback.print_exc()
@@ -498,15 +651,16 @@ def run_gui(preset_files=None, selftest=False):
             self.root = root
             self.files = []
             self.busy = False
+            self.cfg = load_config()
             self.q = queue.Queue()
             root.title("PDF 盖章工具  v{}".format(VERSION))
             vw, vh = root.winfo_screenwidth(), root.winfo_screenheight()
             w = max(700, min(920, vw - 80))
-            # 内容所需高度约 750px；窗口及最小尺寸都不低于它，日志区才不会被挤掉
-            h = max(760, min(860, vh - 80))
+            # 内容所需高度约 790px；窗口及最小尺寸都不低于它，日志区才不会被挤掉
+            h = max(800, min(880, vh - 80))
             root.geometry("{}x{}+{}+{}".format(w, h,
                           max(20, (vw - w) // 2), max(20, (vh - h) // 3)))
-            root.minsize(700, 760)
+            root.minsize(700, 800)
             self.win_h = h
             root.protocol("WM_DELETE_WINDOW", self.on_close)
             try:                                # 窗口左上角也用印章图标
@@ -543,6 +697,7 @@ def run_gui(preset_files=None, selftest=False):
             ttk.Button(row_seal, text="刷新", command=lambda: self.refresh_seals(verbose=True),
                        width=6).pack(side="right", padx=6)
             self.seal_box.bind("<Button-1>", lambda e: self.refresh_seals())   # 点开下拉前重扫
+            self.seal_box.bind("<<ComboboxSelected>>", self.on_seal_changed)   # 换章时套用它的页码策略
             ttk.Label(g1, text="自动扫描 seals\\、程序目录及图纸所在目录中带「章」字的 PDF；请确认选的是整幅透明图层",
                       foreground="#888").pack(anchor="w", pady=(6, 0))
 
@@ -577,7 +732,7 @@ def run_gui(preset_files=None, selftest=False):
             # 4. 输出
             g4 = ttk.LabelFrame(f, text=" 4  输出 ", padding=8)
             g4.pack(fill="x", pady=(0, 8))
-            self.out_var = tk.StringVar(value="stamped")
+            self.out_var = tk.StringVar(value=self.cfg.get("out", "stamped"))
             ttk.Radiobutton(g4, text="源文件目录\\已签章（原件不动，推荐）",
                            variable=self.out_var, value="stamped",
                            command=self.sync_out).pack(anchor="w")
@@ -596,21 +751,37 @@ def run_gui(preset_files=None, selftest=False):
             ex = ttk.Frame(g4)
             ex.pack(fill="x", pady=(6, 0))
             ttk.Label(ex, text="同名文件：").pack(side="left")
-            self.exists_var = tk.StringVar(value="overwrite")
+            self.exists_var = tk.StringVar(value=self.cfg.get("exists", "overwrite"))
             ttk.Radiobutton(ex, text="直接覆盖（默认）", variable=self.exists_var,
                            value="overwrite").pack(side="left")
             ttk.Radiobutton(ex, text="提醒我", variable=self.exists_var,
                            value="ask").pack(side="left", padx=10)
             ttk.Radiobutton(ex, text="自动加后缀", variable=self.exists_var,
                            value="rename").pack(side="left")
+            adv = ttk.Frame(g4)
+            adv.pack(fill="x", pady=(6, 0))
+            ttk.Label(adv, text="章位微调：dx").pack(side="left")
+            self.dx_var = tk.StringVar(value=str(self.cfg.get("dx", 0)))
+            ttk.Spinbox(adv, from_=-100, to=100, increment=0.5, width=6,
+                        textvariable=self.dx_var).pack(side="left", padx=(2, 8))
+            ttk.Label(adv, text="dy").pack(side="left")
+            self.dy_var = tk.StringVar(value=str(self.cfg.get("dy", 0)))
+            ttk.Spinbox(adv, from_=-100, to=100, increment=0.5, width=6,
+                        textvariable=self.dy_var).pack(side="left", padx=(2, 8))
+            ttk.Label(adv, text="pt（正=右 / 上）", foreground="#888").pack(side="left")
+            self.skip_var = tk.BooleanVar(value=bool(self.cfg.get("skip_stamped", True)))
+            ttk.Checkbutton(adv, text="跳过已盖章页", variable=self.skip_var).pack(side="right")
 
             # 5. 执行
             g5 = ttk.Frame(f)
             g5.pack(fill="x", pady=(2, 6))
             self.go = ttk.Button(g5, text="开始盖章", command=self.start, width=14)
             self.go.pack(side="left")
+            self.preview_btn = ttk.Button(g5, text="预览首页", command=self.preview, width=10)
+            self.preview_btn.pack(side="left", padx=(6, 0))
             self.pb = ttk.Progressbar(g5, mode="determinate", maximum=100)
             self.pb.pack(side="left", fill="x", expand=True, padx=10)
+            ttk.Button(g5, text="另存日志", command=self.save_log, width=10).pack(side="right")
 
             # 6. 运行日志：弹性面板 + 双向滚动条，默认窗口下至少显示 6 行
             g6 = ttk.LabelFrame(f, text=" 运行日志 ", padding=(6, 4))
@@ -630,14 +801,121 @@ def run_gui(preset_files=None, selftest=False):
             self.log("PDF 盖章工具 v{}  ·  就绪".format(VERSION))
             self.log("换章：把整幅透明章 PDF 放进 seals\\ 或与图纸同目录（文件名带「章」），或点「浏览」选择。")
             self.refresh_seals(verbose=True)   # 控件齐备后再填充下拉、写日志
+            self.sync_out()
+            self.sync_pages()
             root.update_idletasks()
             self._dnd = enable_file_drop(root, self.on_drop_files)
             self.root.after(100, self.poll)
+            if self.cfg.get("check_update", True):
+                threading.Thread(target=self._check_update, daemon=True).start()
 
         # ---- 小工具 ----
         def log(self, msg):
             self.txt.insert("end", str(msg) + "\n")
             self.txt.see("end")
+
+        def _num(self, var, default=0.0):
+            try:
+                return float(str(var.get()).strip() or default)
+            except Exception:
+                return default
+
+        def _dx(self):
+            return self._num(getattr(self, "dx_var", None), 0.0)
+
+        def _dy(self):
+            return self._num(getattr(self, "dy_var", None), 0.0)
+
+        def on_seal_changed(self, event=None):
+            """换章时套用这枚章记住的页码策略。"""
+            seal = self.seal_map.get(self.seal_var.get(), "")
+            pages = (self.cfg.get("seal_pages") or {}).get(seal)
+            if not pages:
+                return
+            if pages in (PAGE_ALL, PAGE_FIRST):
+                self.pages_var.set(pages)
+                self.pages_entry.configure(state="disabled")
+            else:
+                self.pages_var.set("custom")
+                self.pages_entry.configure(state="normal")
+                self.pages_entry.delete(0, "end")
+                self.pages_entry.insert(0, pages)
+
+        def preview(self):
+            """渲染首页叠章效果，先看再盖。需要 pypdfium2。"""
+            if not self.files:
+                self.mb.showwarning("提示", "请先添加要盖章的 PDF")
+                return
+            seal = self.seal_map.get(self.seal_var.get(), self.seal_var.get())
+            if not seal or not os.path.isfile(seal):
+                self.mb.showwarning("提示", "请先选择章图层")
+                return
+            try:
+                with open(seal, "rb") as f:
+                    sb = f.read()
+                self.log("生成预览：{}".format(os.path.basename(self.files[0])))
+                png = render_preview(self.files[0], sb, self._dx(), self._dy())
+                if not png:
+                    self.mb.showinfo(
+                        "无法预览",
+                        "预览需要 pypdfium2（python -m pip install pypdfium2）。\n"
+                        "不装也不影响盖章、校验等其它功能。")
+                    return
+                top = tk.Toplevel(self.root)
+                top.title("预览 · " + os.path.basename(self.files[0]))
+                img = tk.PhotoImage(file=png)
+                lbl = ttk.Label(top, image=img)
+                lbl.image = img            # 保持引用，否则图片会被回收
+                lbl.pack(padx=8, pady=8)
+                ttk.Label(top, text="仅预览第 1 页；实际按页码设置逐页盖章",
+                          foreground="#888").pack(pady=(0, 8))
+            except Exception as e:
+                self.mb.showerror("预览失败", str(e))
+
+        def save_log(self):
+            from tkinter import filedialog
+            p = filedialog.asksaveasfilename(
+                title="保存运行日志", defaultextension=".txt",
+                filetypes=[("文本文件", "*.txt")], initialfile="stamp_log.txt")
+            if not p:
+                return
+            try:
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(self.txt.get("1.0", "end"))
+                self.log("日志已保存：" + p)
+            except Exception as e:
+                self.mb.showerror("保存失败", str(e))
+
+        def write_report(self, rows, dirs):
+            """写一份盖章报告 CSV，便于交付留痕和返工对照。"""
+            if not rows or not dirs:
+                return None
+            try:
+                base = dirs[0]
+                os.makedirs(base, exist_ok=True)
+                path = os.path.join(base, "盖章报告_{}.csv".format(
+                    time.strftime("%Y%m%d_%H%M%S")))
+                with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                    w = csv.writer(f)
+                    w.writerow(["文件", "输出", "页数", "盖章页", "跳过页",
+                                "大小(字节)", "耗时(秒)", "状态"])
+                    for r in rows:
+                        w.writerow([
+                            r["input"], r["output"], r["pages"],
+                            " ".join(str(x) for x in r["stamped"]),
+                            " ".join(str(x) for x in r["skipped"]),
+                            r["size"], "%.2f" % r["elapsed"], r.get("status", "OK")])
+                return path
+            except Exception:
+                return None
+
+        def _check_update(self):
+            try:
+                new = check_update(VERSION)
+                if new:
+                    self.q.put(("update", new))
+            except Exception:
+                pass
 
         def refresh_seals(self, verbose=False):
             """重扫章候选：seals\\ + 程序目录/当前目录 + 已添加图纸所在目录（带「章」字）。
@@ -664,7 +942,9 @@ def run_gui(preset_files=None, selftest=False):
                 self._last_seal_labels = labels
                 self.seal_box["values"] = labels
             if current not in labels and labels:
-                self.seal_var.set(labels[0])
+                want = self.cfg.get("seal")
+                match = next((lb for lb, p in self.seal_map.items() if p == want), None)
+                self.seal_var.set(match or labels[0])
             if changed or verbose:
                 if not labels:
                     self.log("提示：把章 PDF 放进 seals\\ 或与图纸同目录（文件名带「章」），也可点「浏览」。")
@@ -787,33 +1067,63 @@ def run_gui(preset_files=None, selftest=False):
                     exists_mode = "overwrite" if ans else "rename"
                     self.log("同名处理：{}".format("直接覆盖" if ans else "自动加后缀"))
 
+            dx, dy = self._dx(), self._dy()
+            skip_stamped = bool(self.skip_var.get())
+            # 记住这次的选择，下次打开直接沿用
+            self.cfg.update({
+                "seal": seal, "pages": pages_spec,
+                "out": self.out_var.get(), "exists": exists_mode,
+                "dx": dx, "dy": dy, "skip_stamped": skip_stamped,
+            })
+            self.cfg.setdefault("seal_pages", {})[seal] = pages_spec
+            save_config(self.cfg)
+
             self.busy = True
             self.go.configure(state="disabled")
             self.pb["value"] = 0
             self.log("=" * 60)
+            if dx or dy:
+                self.log("章位微调：dx={:g} dy={:g} pt".format(dx, dy))
             args = (list(self.files), seal, pages_spec,
-                    self.out_var.get(), self.dir_var.get().strip(), exists_mode)
+                    self.out_var.get(), self.dir_var.get().strip(), exists_mode,
+                    dx, dy, skip_stamped)
             threading.Thread(target=self.worker, args=args, daemon=True).start()
 
-        def worker(self, files, seal, pages_spec, out_mode, custom_dir, exists_mode):
+        def worker(self, files, seal, pages_spec, out_mode, custom_dir, exists_mode,
+                   dx, dy, skip_stamped):
             def qlog(m):
                 self.q.put(("log", m))
             try:
                 with open(seal, "rb") as f:
                     seal_bytes = f.read()
+                try:
+                    markers = seal_markers(PdfReader(io.BytesIO(seal_bytes)).pages[0])
+                except Exception:
+                    markers = None
                 total = len(files)
                 ok = 0
                 out_dirs = []
+                rows = []
                 for k, src in enumerate(files, 1):
+                    t0 = time.time()
                     self.q.put(("log", "[{}/{}] {}".format(k, total, os.path.basename(src))))
-                    dst, n, _ = stamp_file(src, seal_bytes, pages_spec,
-                                           out_mode, custom_dir, qlog,
-                                           exists_mode=exists_mode)
+                    dst, n, _, skipped = stamp_file(
+                        src, seal_bytes, pages_spec, out_mode, custom_dir, qlog,
+                        exists_mode=exists_mode, dx=dx, dy=dy,
+                        skip_stamped=skip_stamped, markers=markers)
                     out_dirs.append(os.path.dirname(dst))
-                    self.q.put(("log", "    -> {}  ({} 页)".format(dst, n)))
+                    idxs = parse_pages(pages_spec, n)
+                    rows.append({
+                        "input": os.path.abspath(src),
+                        "output": os.path.abspath(dst), "pages": n,
+                        "stamped": [i + 1 for i in idxs if (i + 1) not in skipped],
+                        "skipped": skipped, "size": os.path.getsize(dst),
+                        "elapsed": time.time() - t0})
+                    self.q.put(("log", "    -> {}  ({} 页{})".format(
+                        dst, n, "，跳过 {} 页".format(len(skipped)) if skipped else "")))
                     ok += 1
                     self.q.put(("progress", k * 100.0 / total))
-                self.q.put(("done", (ok, out_dirs)))   # 统一 2 元组，poll 里按 kind, payload 解包
+                self.q.put(("done", (ok, out_dirs, rows)))   # 2 元组，payload 是三元
             except Exception:
                 self.q.put(("error", traceback.format_exc()))
 
@@ -838,10 +1148,13 @@ def run_gui(preset_files=None, selftest=False):
                     elif kind == "progress":
                         self.pb["value"] = payload
                     elif kind == "done":
-                        ok_count, dirs = payload
+                        ok_count, dirs, rows = payload
                         self.busy = False
                         self.go.configure(state="normal")
                         self.log("完成，成功 {} 个。".format(ok_count))
+                        report = self.write_report(rows, dirs)
+                        if report:
+                            self.log("盖章报告：" + report)
                         unique = []
                         for d in dirs:
                             if d and os.path.isdir(d) and d not in unique:
@@ -854,6 +1167,8 @@ def run_gui(preset_files=None, selftest=False):
                                 except Exception as e:
                                     self.log("打开文件夹失败：{}".format(e))
                             self.log("已打开输出文件夹。")
+                    elif kind == "update":
+                        self.log("发现新版本 v{}，可在 GitHub Releases 下载".format(payload))
                     elif kind == "error":
                         self.busy = False
                         self.go.configure(state="normal")
@@ -903,7 +1218,7 @@ def run_gui(preset_files=None, selftest=False):
         # 完成事件回归：模拟 worker 发出 done，验证 busy 与按钮被正确复位、窗口可关闭
         app.busy = True
         app.go.configure(state="disabled")
-        app.q.put(("done", (2, [])))
+        app.q.put(("done", (2, [], [])))
         app.poll()
         status.append("DONE OK busy=%s go=%s" % (app.busy, str(app.go["state"])))
         # 窗口内拖放回归：构造真实 HDROP 投递 WM_DROPFILES，验证路径进入文件列表
@@ -960,17 +1275,29 @@ def run_gui(preset_files=None, selftest=False):
                 w.write(blank)
                 with open(seals[0], "rb") as fh:
                     sb = fh.read()
-                dst, n, _ = stamp_file(blank, sb, PAGE_ALL, "custom", td,
-                                       log=lambda m: None)
+                dst, n, _, _ = stamp_file(blank, sb, PAGE_ALL, "custom", td,
+                                          log=lambda m: None)
                 status.append("STAMP OK pages=%d size=%d" % (n, os.path.getsize(dst)))
                 # 同名策略：覆盖应回同一路径；改名应换成带后缀的文件
-                again, _, _ = stamp_file(blank, sb, PAGE_ALL, "custom", td,
-                                        log=lambda m: None, exists_mode="overwrite")
-                renamed, _, _ = stamp_file(blank, sb, PAGE_ALL, "custom", td,
-                                           log=lambda m: None, exists_mode="rename")
+                again, _, _, _ = stamp_file(blank, sb, PAGE_ALL, "custom", td,
+                                            log=lambda m: None, exists_mode="overwrite")
+                renamed, _, _, _ = stamp_file(blank, sb, PAGE_ALL, "custom", td,
+                                              log=lambda m: None, exists_mode="rename")
                 status.append("EXISTS OK same=%s renamed=%s" % (
                     os.path.normcase(again) == os.path.normcase(dst),
                     os.path.basename(renamed)))
+                # 已盖章检测：对刚盖好的文件再跑一次，应全部跳过、不叠第二层
+                _, _, _, skip_list = stamp_file(
+                    dst, sb, PAGE_ALL, "custom", td, log=lambda m: None,
+                    skip_stamped=True)
+                status.append("SKIP OK skipped=%d" % len(skip_list))
+                # 章位微调：dx=10 应让平移量正好大 10 pt
+                sw0 = float(PdfReader(io.BytesIO(sb)).pages[0].mediabox.width)
+                _, _, pl, _ = stamp_file(blank, sb, PAGE_ALL, "custom", td,
+                                         log=lambda m: None, dx=10.0)
+                status.append("DX OK shift=%.1f" % (pl[0][3] - (pl[0][1] - sw0)))
+                status.append("PREVIEW %s" % ("OK" if render_preview(blank, sb) else "SKIP"))
+                status.append("CFG OK keys=%d" % len(load_config()))
                 # 若自检参数里带了真实 PDF，再跑一遍端到端盖章
                 sample = next((a for a in sys.argv[1:]
                                if a.lower().endswith(".pdf") and os.path.isfile(a)), None)
@@ -980,8 +1307,8 @@ def run_gui(preset_files=None, selftest=False):
                     status.append("SCAN OK count=%d values=%s" %
                                   (len(labels), "|".join(labels)))
                     td2 = tempfile.mkdtemp(prefix="stamp_self_")
-                    real, rn, _ = stamp_file(sample, sb, PAGE_ALL, "custom", td2,
-                                             log=lambda m: None)
+                    real, rn, real_pl, _ = stamp_file(sample, sb, PAGE_ALL, "custom", td2,
+                                                      log=lambda m: None)
                     status.append("REAL OK pages=%d size=%d out=%s" %
                                   (rn, os.path.getsize(real), real))
             else:

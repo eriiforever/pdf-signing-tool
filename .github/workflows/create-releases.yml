@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Create v1.0 v2.0 v2.1 v2.2 releases
+      - name: Create v1.0 v2.0 v2.1 v2.2 v3.0 releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for v in v1.0 v2.0 v2.1 v2.2; do
+          for v in v1.0 v2.0 v2.1 v2.2 v3.0; do
             if gh release view "$v" >/dev/null 2>&1; then
               gh release edit "$v" --notes-file "releases/$v.md"
               echo "$v notes synced"
@@ -27,34 +27,29 @@ jobs:
               echo "created $v"
             fi
           done
-      - name: Refresh release executables
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for v in v1.0 v2.0 v2.1 v2.2; do
-            gh release view "$v" --json assets --jq '.assets[].name' | while IFS= read -r name; do
-              case "$name" in *.exe) gh release delete-asset "$v" "$name" -y ;; esac
-            done
-          done
-          for f in dist/*.exe; do
-            [ -e "$f" ] || continue
-            case "$f" in
-              *v1.0.exe) tag=v1.0 ;;
-              *v2.0.exe) tag=v2.0 ;;
-              *v2.1.exe) tag=v2.1 ;;
-              *v2.2.exe) tag=v2.2 ;;
-              *) continue ;;
-            esac
-            gh release upload "$tag" "$f" --clobber
-            echo "uploaded $f -> $tag"
-          done
-
-      - name: Package and upload the AI skill
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package the AI skill
         run: |
           cd skills
           zip -qr ../dist/pdf-seal-stamp-lite-skill.zip pdf-seal-stamp-lite
           cd ..
-          gh release upload v2.2 dist/pdf-seal-stamp-lite-skill.zip --clobber
-          echo "uploaded skill zip"
+          ls -l dist/pdf-seal-stamp-lite-skill.zip
+      - name: Refresh the current release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view v3.0 --json assets --jq '.assets[].name' | while IFS= read -r name; do
+            case "$name" in
+              *.exe|*.zip) gh release delete-asset v3.0 "$name" -y ;;
+            esac
+          done
+          gh release upload v3.0 dist/PDFStamp-v3.0.exe --clobber
+          gh release upload v3.0 dist/pdf-seal-stamp-lite-skill.zip --clobber
+          echo "uploaded v3.0 assets"
+      - name: Write and upload checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist
+          sha256sum PDFStamp-v3.0.exe pdf-seal-stamp-lite-skill.zip > checksums.txt
+          cat checksums.txt
+          gh release upload v3.0 checksums.txt --clobber
