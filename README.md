@@ -40,6 +40,7 @@ docs/        盖章规则、等效参数与踩坑记录
 skill/       早期命令行版本（pdf-seal-stamp 技能，inspect/apply/verify/restore）
 history/     各版本归档说明与未完成的实验源码
 releases/    v1.0 / v2.0 / v2.1 的发布说明
+dist/        三个版本的可执行文件（同时挂在各自 Release 上）
 ```
 
 ## 依赖与许可

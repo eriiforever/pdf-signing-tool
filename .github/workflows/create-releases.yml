@@ -27,17 +27,23 @@ jobs:
               echo "created $v"
             fi
           done
-      - name: Refresh the v2.1 executable asset
+      - name: Refresh release executables
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view v2.1 --json assets --jq '.assets[].name' | while IFS= read -r name; do
-            case "$name" in
-              *.exe) gh release delete-asset v2.1 "$name" -y ;;
-            esac
+          for v in v1.0 v2.0 v2.1; do
+            gh release view "$v" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+              case "$name" in *.exe) gh release delete-asset "$v" "$name" -y ;; esac
+            done
           done
           for f in dist/*.exe; do
             [ -e "$f" ] || continue
-            gh release upload v2.1 "$f" --clobber
-            echo "uploaded $f"
+            case "$f" in
+              *v1.0.exe) tag=v1.0 ;;
+              *v2.0.exe) tag=v2.0 ;;
+              *v2.1.exe) tag=v2.1 ;;
+              *) continue ;;
+            esac
+            gh release upload "$tag" "$f" --clobber
+            echo "uploaded $f -> $tag"
           done
