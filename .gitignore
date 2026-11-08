@@ -8,3 +8,7 @@ _本地资料_不上传/
 *.ico
 samples/*.pdf
 !samples/.gitkeep
+dist/*.zip
+Thumbs.db
+.DS_Store
+*.bak

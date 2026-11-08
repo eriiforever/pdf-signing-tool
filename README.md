@@ -1,35 +1,44 @@
 # PDF 盖章工具
 
-把「整幅图幅大小的透明章图层 PDF」1:1 叠加到工程图纸或报告上，并配套一个开箱即用的图形界面程序。
+把「整幅图幅大小的透明章图层 PDF」1:1 叠加到工程图纸或报告上，配一个开箱即用的图形界面程序，另带一套给 AI 调用的零依赖命令行技能。
 
-本仓库**不含任何真实印章、真实图纸、单位名称或项目信息**。示例章是一个红框里写着「测试章」的示意图层，由 `tools/make_sample_seal.py` 生成。
+`v2.2` · Windows · MIT · 仓库内不含任何真实印章、图纸、单位或项目信息
 
-## 三条铁律
+## 能做什么
 
-1. **整幅图层叠加，绝不裁剪、缩放、旋转。** 章 PDF 是一整页透明图层，红色章只占其中一小块；保持整幅原尺寸叠加，章的相对位置自然保留。
-2. **图层右下角对齐页面右下角**，逐页读取页面尺寸定位，不写死坐标。同一份图纸里常有 A2、加宽、加高等混合图幅。
-3. **原件不动**：默认输出到「源文件目录\已签章\」；选择覆盖原件时先备份到 `_未盖章原件\`，已存在不覆盖。盖完逐页校验，返工先恢复。
+- 整幅章图层 1:1 叠加：不裁剪、不缩放、不旋转，章在图层内的相对位置原样保留
+- 默认右下角对齐，逐页读取页面尺寸，适配 A2 / 加宽 / 加高混合图幅
+- 每页 / 仅首页 / 指定页码；输出到「已签章」或覆盖原件（自动备份，已存在不覆盖）
+- 同目录章图层自动发现、同名文件三策略、盖章后逐页校验、返工可从备份恢复
+- 图形界面支持把 PDF 或整个文件夹直接拖进窗口添加
 
 ## 版本
 
-当前版本 **v2.2**。窗口标题、界面、启动日志、`--version` 与 exe 的 Windows 文件属性（FileVersion 2.2.0.0 / ProductVersion 2.2）都写入了版本号；升级时请同步修改 `src/stamp_gui.py` 的 `VERSION` 常量与 `tools/version_info.txt`。
-
 | 版本 | 形态 | 说明 |
 |---|---|---|
-| v1.0 | 网页版 | 本地 HTTP 服务 + 内嵌 HTML 页面 + 浏览器；单文件 exe。已知问题：文件框层级、输出目录、关窗行为 |
-| v2.0 | 独立窗口 | 首次脱离浏览器，tkinter 原生窗口 + pypdf，单文件 exe，不用装 Python |
-| v2.1 | 稳定版 | 同目录章自动发现、同名文件三策略、完成后打开输出文件夹、日志区弹性布局、内置脱敏示意章 |
-| **v2.2** | **当前** | 窗口内直接拖入 PDF / 文件夹添加、版本号 2.2 |
+| v1.0 | 网页版 | 本地 HTTP 服务 + 内嵌 HTML + 浏览器；单文件 exe。已知问题：文件框层级、输出目录、关窗行为 |
+| v2.0 | 独立窗口 | 首次脱离浏览器，tkinter 原生窗口 + pypdf，单文件 exe，目标机无需 Python |
+| v2.1 | 稳定版 | 同目录章自动发现、同名文件三策略、完成后打开输出文件夹、日志区弹性布局 |
+| **v2.2** | **当前** | 窗口内直接拖入 PDF / 文件夹；零依赖 AI 技能；版本号写入文件属性 |
 
-详见 [CHANGELOG.md](CHANGELOG.md)、`releases/` 与 `history/`。
+各版本的变更明细见 [CHANGELOG.md](CHANGELOG.md)，发布说明在 `releases/`，已停止维护的实现在 `history/`。
 
 ## 快速开始
 
-- **直接用**：下载 v2.2 Release 附件 `PDFStamp-v2.2.exe`，双击即用；本地也交付了同名文件。
-- **源码运行**：需 Python 3.9+ 且带 tkinter，`pip install -r src/requirements.txt`，然后 `python src/stamp_gui.py`。
-- **窗口内拖拽**：把 PDF 或整个文件夹从资源管理器直接拖进程序窗口，自动加入待盖章列表；也可拖到程序图标上启动。
-- **自行打包**：见 `tools/build_exe.md`。
-- **生成示意章**：`python tools/make_sample_seal.py`（需 Pillow 与 pypdf）。
+**直接用**：下载 v2.2 Release 附件 `PDFStamp-v2.2.exe`，双击运行；把 PDF 或文件夹拖进窗口即可添加。
+
+**从源码运行**：
+
+```bash
+python -m pip install -r src/requirements.txt
+python src/stamp_gui.py
+```
+
+需要 Python 3.9+ 且自带 tkinter。
+
+**自行打包**：见 [`tools/build_exe.md`](tools/build_exe.md)。
+
+**生成示意章**：`python tools/make_sample_seal.py`（需 Pillow 与 pypdf），产物不含任何真实印章信息。
 
 ## AI 技能
 
@@ -42,21 +51,26 @@ python skills/pdf-seal-stamp-lite/scripts/stamp.py apply  --seal path/to/seal.pd
 python skills/pdf-seal-stamp-lite/scripts/stamp.py verify --seal path/to/seal.pdf --file path/to/已签章/drawing.pdf --json
 ```
 
-把 `skills/pdf-seal-stamp-lite/` 整个目录放进你的 skills 目录即可被 Agent 自动发现；Release 另附 `pdf-seal-stamp-lite-skill.zip`。所有命令支持 `--json`，退出码 0/1/2。
+把 `skills/pdf-seal-stamp-lite/` 放进你的 skills 目录即可被 Agent 自动发现；Release 另附 `pdf-seal-stamp-lite-skill.zip`。四个子命令都支持 `--json`，退出码 0 / 1 / 2 分别表示成功、出错、校验不通过。
+
+## 三条铁律
+
+1. **整幅图层叠加，绝不裁剪、缩放、旋转。** 章 PDF 是一整页透明图层，红色章只占其中一小块；把章裁出来贴页面角会偏位，尤其在加宽图纸上。
+2. **右下角对齐，逐页取尺寸。** 图层右下角贴合页面右下角；同一份图纸常混有 A2、加宽、加高等图幅，不能写死坐标。
+3. **原件不动，盖完校验。** 默认输出到「源文件目录\已签章\」；覆盖模式先备份到 `_未盖章原件\`（已存在不覆盖）。校验不过就从备份恢复重盖，不要叠第二层。
 
 ## 目录
 
 ```
-src/         v2.2 图形界面源码
-tools/       示意章、图标的生成脚本与打包说明
-samples/     示意章生成结果（运行脚本后得到）
-docs/        盖章规则、等效参数与踩坑记录
-skills/      AI 技能 pdf-seal-stamp-lite（零依赖 CLI：inspect/apply/verify/restore）
-history/     各版本归档说明与未完成的实验源码
-releases/    v1.0 / v2.0 / v2.1 的发布说明
-dist/        三个版本的可执行文件（同时挂在各自 Release 上）
+src/       v2.2 图形界面源码（单文件 stamp_gui.py + 启动器）
+skills/    AI 技能 pdf-seal-stamp-lite（零依赖 CLI）
+tools/     示意章 / 图标生成脚本、打包说明、版本资源
+docs/      盖章规则、参数换算与踩坑记录
+dist/      v1.0–v2.2 可执行文件（同时挂在各自 Release 上）
+history/   历史实现归档：网页版说明、v2.0 说明、Qt 实验源码、旧命令行技能
+releases/  v1.0 / v2.0 / v2.1 / v2.2 的发布说明
 ```
 
 ## 依赖与许可
 
-运行时仅需 `pypdf >= 6.0`（纯 Python）；窗口用 Python 标准库 tkinter。工具代码采用 MIT 许可，见 [LICENSE](LICENSE)。
+运行时仅需 `pypdf >= 6.0`（纯 Python），窗口用标准库 tkinter，别无其它依赖。代码采用 MIT 许可，见 [LICENSE](LICENSE)。
