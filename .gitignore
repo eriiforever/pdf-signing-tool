@@ -4,6 +4,7 @@ __pycache__/
 *.log
 _本地资料_不上传/
 *.exe
+!dist/*.exe
 *.ico
 samples/*.pdf
 !samples/.gitkeep

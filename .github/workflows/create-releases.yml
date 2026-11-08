@@ -5,6 +5,7 @@ on:
     paths:
       - 'releases/*.md'
       - '.github/workflows/create-releases.yml'
+      - 'dist/*.exe'
   workflow_dispatch:
 permissions:
   contents: write
@@ -24,4 +25,13 @@ jobs:
               gh release create "$v" --title "$v" --notes-file "releases/$v.md" --target main
               echo "created $v"
             fi
+          done
+      - name: Attach the v2.1 executable to its release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in dist/*.exe; do
+            [ -e "$f" ] || continue
+            gh release upload v2.1 "$f" --clobber
+            echo "uploaded $f"
           done
