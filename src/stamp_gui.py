@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
     "dx": 0.0,              # 章位微调（pt，正=右 / 上）
     "dy": 0.0,
     "skip_stamped": False,  # 跳过已经盖过这枚章的页（默认关闭，由用户勾选）
+    "report": False,        # 盖章完成后生成 txt 报告（默认关闭）
     "seal_pages": {},       # 每个章文件记住的页码策略
     "check_update": True,   # 启动时检查新版本
 }
@@ -193,6 +194,57 @@ def save_config(cfg):
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+def range_text(pages):
+    """[1,2,3,5] -> '1-3, 5'；空 -> '无'。"""
+    if not pages:
+        return "无"
+    nums = sorted({int(p) for p in pages})
+    out, start, prev = [], nums[0], nums[0]
+    for p in nums[1:]:
+        if p == prev + 1:
+            prev = p
+            continue
+        out.append(str(start) if start == prev else "{}-{}".format(start, prev))
+        start = prev = p
+    out.append(str(start) if start == prev else "{}-{}".format(start, prev))
+    return ", ".join(out)
+
+
+def write_report(rows, dirs, seal="", pages_spec="", dx=0.0, dy=0.0):
+    """把本批盖章结果写成 txt 报告，返回路径；不用时不会调用。"""
+    if not rows or not dirs:
+        return None
+    try:
+        base = dirs[0]
+        os.makedirs(base, exist_ok=True)
+        path = os.path.join(base, "盖章报告_{}.txt".format(
+            time.strftime("%Y%m%d_%H%M%S")))
+        lines = [
+            "PDF 盖章报告",
+            "生成时间：{}".format(time.strftime("%Y-%m-%d %H:%M:%S")),
+            "章图层：{}".format(os.path.basename(seal) if seal else "-"),
+            "页码策略：{}".format(pages_spec or "-"),
+            "章位微调：dx={:g}  dy={:g}".format(float(dx), float(dy)),
+            "",
+        ]
+        for idx, r in enumerate(rows, 1):
+            lines.append("[{}] {}".format(idx, os.path.basename(r["input"])))
+            lines.append("    输出：{}".format(r["output"]))
+            lines.append("    页数：{}    盖章页：{}    跳过页：{}".format(
+                r["pages"], range_text(r.get("stamped", [])),
+                range_text(r.get("skipped", []))))
+            lines.append("    大小：{:,} 字节    耗时：{:.2f} 秒".format(
+                r.get("size", 0), r.get("elapsed", 0.0)))
+            lines.append("")
+        ok = len([r for r in rows if r.get("status", "OK") == "OK"])
+        lines.append("汇总：成功 {} 个，失败 {} 个".format(ok, len(rows) - ok))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        return path
+    except Exception:
+        return None
 
 
 def seal_markers(seal_page):
@@ -551,7 +603,8 @@ def stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir, log=print,
 
 
 def batch(files, seal_path, pages_spec, out_mode, custom_dir, log=print,
-          exists_mode="overwrite", dx=0.0, dy=0.0, skip_stamped=False):
+          exists_mode="overwrite", dx=0.0, dy=0.0, skip_stamped=False,
+          report=False):
     with open(seal_path, "rb") as f:
         seal_bytes = f.read()
     try:
@@ -559,19 +612,32 @@ def batch(files, seal_path, pages_spec, out_mode, custom_dir, log=print,
     except Exception:
         markers = None
     ok, fail = 0, []
+    rows, out_dirs = [], []
     for k, src in enumerate(files, 1):
+        t0 = time.time()
         log("[{}/{}] {}".format(k, len(files), os.path.basename(src)))
         try:
             dst, n, _, skipped = stamp_file(
                 src, seal_bytes, pages_spec, out_mode, custom_dir,
                 log, exists_mode=exists_mode, dx=dx, dy=dy,
                 skip_stamped=skip_stamped, markers=markers)
+            out_dirs.append(os.path.dirname(dst))
+            idxs = parse_pages(pages_spec, n)
+            rows.append({"input": os.path.abspath(src),
+                         "output": os.path.abspath(dst), "pages": n,
+                         "stamped": [i + 1 for i in idxs if (i + 1) not in skipped],
+                         "skipped": skipped, "size": os.path.getsize(dst),
+                         "elapsed": time.time() - t0})
             log("    -> {}  ({} 页{})".format(
                 dst, n, "，跳过 {} 页".format(len(skipped)) if skipped else ""))
             ok += 1
         except Exception as e:
             fail.append((src, str(e)))
             log("    失败：{}".format(e))
+    if report and rows:
+        path = write_report(rows, out_dirs, seal_path, pages_spec, dx, dy)
+        if path:
+            log("盖章报告：" + path)
     log("完成：成功 {} 个，失败 {} 个".format(ok, len(fail)))
     for src, err in fail:
         log("  x {} : {}".format(os.path.basename(src), err))
@@ -600,6 +666,8 @@ def run_cli(argv):
     ap.add_argument("--dy", type=float, default=0.0, help="章位垂直微调（pt，正=上）")
     ap.add_argument("--skip-stamped", action=argparse.BooleanOptionalAction,
                      default=False, help="跳过已盖过这枚章的页（默认关）")
+    ap.add_argument("--report", action=argparse.BooleanOptionalAction,
+                     default=False, help="在输出目录生成 txt 盖章报告（默认关）")
     args = ap.parse_args(argv)
 
     files = expand_files(args.files)
@@ -612,11 +680,12 @@ def run_cli(argv):
             raise RuntimeError("章 PDF 不存在：" + seal)
         log = print
         log("章：{}".format(seal))
-        log("输出：{} | 页码：{} | 同名：{} | 微调：({}, {}) | 跳过已盖：{}".format(
-            args.out, args.pages, args.exists, args.dx, args.dy, args.skip_stamped))
+        log("输出：{} | 页码：{} | 同名：{} | 微调：({}, {}) | 跳过已盖：{} | 报告：{}".format(
+            args.out, args.pages, args.exists, args.dx, args.dy,
+            args.skip_stamped, args.report))
         _, fail = batch(files, seal, args.pages, args.out, args.dir, log,
                         exists_mode=args.exists, dx=args.dx, dy=args.dy,
-                        skip_stamped=args.skip_stamped)
+                        skip_stamped=args.skip_stamped, report=args.report)
         return 1 if fail else 0
     except Exception:
         traceback.print_exc()
@@ -769,8 +838,13 @@ def run_gui(preset_files=None, selftest=False):
             ttk.Spinbox(adv, from_=-100, to=100, increment=0.5, width=6,
                         textvariable=self.dy_var).pack(side="left", padx=(2, 8))
             ttk.Label(adv, text="pt（正=右 / 上）", foreground="#888").pack(side="left")
-            self.skip_var = tk.BooleanVar(value=bool(self.cfg.get("skip_stamped", True)))
-            ttk.Checkbutton(adv, text="跳过已盖章页", variable=self.skip_var).pack(side="right")
+            self.skip_var = tk.BooleanVar(value=bool(self.cfg.get("skip_stamped", False)))
+            self.report_var = tk.BooleanVar(value=bool(self.cfg.get("report", False)))
+            chk = ttk.Frame(adv)
+            chk.pack(side="right")
+            ttk.Checkbutton(chk, text="生成盖章报告", variable=self.report_var).pack(side="left")
+            ttk.Checkbutton(chk, text="跳过已盖章页", variable=self.skip_var).pack(
+                side="left", padx=(10, 0))
 
             # 5. 执行
             g5 = ttk.Frame(f)
@@ -885,29 +959,6 @@ def run_gui(preset_files=None, selftest=False):
                 self.log("日志已保存：" + p)
             except Exception as e:
                 self.mb.showerror("保存失败", str(e))
-
-        def write_report(self, rows, dirs):
-            """写一份盖章报告 CSV，便于交付留痕和返工对照。"""
-            if not rows or not dirs:
-                return None
-            try:
-                base = dirs[0]
-                os.makedirs(base, exist_ok=True)
-                path = os.path.join(base, "盖章报告_{}.csv".format(
-                    time.strftime("%Y%m%d_%H%M%S")))
-                with open(path, "w", encoding="utf-8-sig", newline="") as f:
-                    w = csv.writer(f)
-                    w.writerow(["文件", "输出", "页数", "盖章页", "跳过页",
-                                "大小(字节)", "耗时(秒)", "状态"])
-                    for r in rows:
-                        w.writerow([
-                            r["input"], r["output"], r["pages"],
-                            " ".join(str(x) for x in r["stamped"]),
-                            " ".join(str(x) for x in r["skipped"]),
-                            r["size"], "%.2f" % r["elapsed"], r.get("status", "OK")])
-                return path
-            except Exception:
-                return None
 
         def _check_update(self):
             try:
@@ -1069,11 +1120,12 @@ def run_gui(preset_files=None, selftest=False):
 
             dx, dy = self._dx(), self._dy()
             skip_stamped = bool(self.skip_var.get())
+            report = bool(self.report_var.get())
             # 记住这次的选择，下次打开直接沿用
             self.cfg.update({
                 "seal": seal, "pages": pages_spec,
                 "out": self.out_var.get(), "exists": exists_mode,
-                "dx": dx, "dy": dy, "skip_stamped": skip_stamped,
+                "dx": dx, "dy": dy, "skip_stamped": skip_stamped, "report": report,
             })
             self.cfg.setdefault("seal_pages", {})[seal] = pages_spec
             save_config(self.cfg)
@@ -1086,11 +1138,11 @@ def run_gui(preset_files=None, selftest=False):
                 self.log("章位微调：dx={:g} dy={:g} pt".format(dx, dy))
             args = (list(self.files), seal, pages_spec,
                     self.out_var.get(), self.dir_var.get().strip(), exists_mode,
-                    dx, dy, skip_stamped)
+                    dx, dy, skip_stamped, report)
             threading.Thread(target=self.worker, args=args, daemon=True).start()
 
         def worker(self, files, seal, pages_spec, out_mode, custom_dir, exists_mode,
-                   dx, dy, skip_stamped):
+                   dx, dy, skip_stamped, report):
             def qlog(m):
                 self.q.put(("log", m))
             try:
@@ -1123,7 +1175,9 @@ def run_gui(preset_files=None, selftest=False):
                         dst, n, "，跳过 {} 页".format(len(skipped)) if skipped else "")))
                     ok += 1
                     self.q.put(("progress", k * 100.0 / total))
-                self.q.put(("done", (ok, out_dirs, rows)))   # 2 元组，payload 是三元
+                report_path = write_report(rows, out_dirs, seal, pages_spec, dx, dy) \
+                    if report else None
+                self.q.put(("done", (ok, out_dirs, rows, report_path)))
             except Exception:
                 self.q.put(("error", traceback.format_exc()))
 
@@ -1148,13 +1202,12 @@ def run_gui(preset_files=None, selftest=False):
                     elif kind == "progress":
                         self.pb["value"] = payload
                     elif kind == "done":
-                        ok_count, dirs, rows = payload
+                        ok_count, dirs, rows, report_path = payload
                         self.busy = False
                         self.go.configure(state="normal")
                         self.log("完成，成功 {} 个。".format(ok_count))
-                        report = self.write_report(rows, dirs)
-                        if report:
-                            self.log("盖章报告：" + report)
+                        if report_path:
+                            self.log("盖章报告：" + report_path)
                         unique = []
                         for d in dirs:
                             if d and os.path.isdir(d) and d not in unique:
@@ -1218,7 +1271,7 @@ def run_gui(preset_files=None, selftest=False):
         # 完成事件回归：模拟 worker 发出 done，验证 busy 与按钮被正确复位、窗口可关闭
         app.busy = True
         app.go.configure(state="disabled")
-        app.q.put(("done", (2, [], [])))
+        app.q.put(("done", (2, [], [], None)))
         app.poll()
         status.append("DONE OK busy=%s go=%s" % (app.busy, str(app.go["state"])))
         # 窗口内拖放回归：构造真实 HDROP 投递 WM_DROPFILES，验证路径进入文件列表
@@ -1298,6 +1351,12 @@ def run_gui(preset_files=None, selftest=False):
                 status.append("DX OK shift=%.1f" % (pl[0][3] - (pl[0][1] - sw0)))
                 status.append("PREVIEW %s" % ("OK" if render_preview(blank, sb) else "SKIP"))
                 status.append("CFG OK keys=%d" % len(load_config()))
+                rep = write_report(
+                    [{"input": blank, "output": dst, "pages": n,
+                      "stamped": [1], "skipped": [], "size": 1, "elapsed": 0.1}],
+                    [td], "seal.pdf", "all", 0, 0)
+                status.append("REPORT %s" % (
+                    "OK" if rep and rep.endswith(".txt") else "FAIL"))
                 # 若自检参数里带了真实 PDF，再跑一遍端到端盖章
                 sample = next((a for a in sys.argv[1:]
                                if a.lower().endswith(".pdf") and os.path.isfile(a)), None)
