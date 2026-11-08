@@ -24,7 +24,8 @@
 | [v1.0](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v1.0) | 网页版 | 本地 HTTP 服务 + 内嵌 HTML + 浏览器；单文件 exe。已知问题：文件框层级、输出目录、关窗行为 |
 | [v2.0](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.0) | 独立窗口 | 首次脱离浏览器，tkinter 原生窗口 + pypdf，单文件 exe，目标机无需 Python |
 | [v2.1](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.1) | 稳定版 | 同目录章自动发现、同名文件三策略、完成后打开输出文件夹、日志区弹性布局 |
-| **[v2.2](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.2)** | **当前** | 窗口内直接拖入 PDF / 文件夹；零依赖 AI 技能；版本号写入文件属性 |
+| [v2.2](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.2) | 稳定版 | 窗口内直接拖入 PDF / 文件夹；零依赖 AI 技能 |
+| **[v2.3](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.3)** | **当前** | 盖章前预览、可选跳过已盖章页、章位微调、配置记忆、可选 txt 报告、CI 回归测试 |
 
 各版本的变更明细见 [CHANGELOG.md](CHANGELOG.md)，发布说明在 `releases/`，已停止维护的实现在 `history/`。
 
@@ -92,7 +93,7 @@ Expand-Archive "$env:TEMP\skill.zip" -DestinationPath $dst -Force
 
 WorkBuddy 用户把目标目录换成 `~/.workbuddy/skills`（Windows：`$env:USERPROFILE\.workbuddy\skills`）。装完重载技能列表或重启会话，Agent 就能发现它。
 
-链接走 GitHub 的 `releases/latest`，始终指向最新正式版；如需锁定版本，把 URL 里的 `latest` 换成 `v2.2`。zip 解压后就是 `pdf-seal-stamp-lite/` 目录，直接落在 skills 目录下。
+链接走 GitHub 的 `releases/latest`，始终指向最新正式版；如需锁定版本，把 URL 里的 `latest` 换成 `v2.3`。zip 解压后就是 `pdf-seal-stamp-lite/` 目录，直接落在 skills 目录下。
 
 已经 clone 了仓库的话，也可以直接从源码目录复制：
 
@@ -128,9 +129,9 @@ src/       v2.3 图形界面源码（单文件 stamp_gui.py + 启动器）
 skills/    AI 技能 pdf-seal-stamp-lite（零依赖 CLI）
 tools/     示意章 / 图标生成脚本、打包说明、版本资源
 docs/      盖章规则、参数换算与踩坑记录
-dist/      v1.0–v2.2 可执行文件（同时挂在各自 Release 上）
+dist/      v1.0–v2.3 可执行文件（同时挂在各自 Release 上）
 history/   历史实现归档：网页版说明、v2.0 说明、Qt 实验源码、旧命令行技能
-releases/  v1.0 / v2.0 / v2.1 / v2.2 的发布说明
+releases/  v1.0 / v2.0 / v2.1 / v2.2 / v2.3 的发布说明
 ```
 
 ## 依赖与许可
