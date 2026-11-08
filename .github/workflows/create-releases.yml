@@ -1,0 +1,27 @@
+name: Create version releases
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'releases/*.md'
+      - '.github/workflows/create-releases.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create v1.0 v2.0 v2.1 releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for v in v1.0 v2.0 v2.1; do
+            if gh release view "$v" >/dev/null 2>&1; then
+              echo "$v already exists"
+            else
+              gh release create "$v" --title "$v" --notes-file "releases/$v.md" --target main
+              echo "created $v"
+            fi
+          done
