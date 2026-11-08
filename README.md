@@ -42,7 +42,42 @@ python src/stamp_gui.py
 
 ## AI 技能
 
-`skills/pdf-seal-stamp-lite/` 是给 Agent 调用的零依赖 CLI 技能，**不含任何章文件**，章由使用者通过 `--seal` 传入：
+`skills/pdf-seal-stamp-lite/` 是给 Agent 调用的零依赖 CLI 技能，**不含任何章文件**，章由使用者通过 `--seal` 传入。
+
+### 一键安装
+
+装到 Claude Code / Claude 的 skills 目录（`~/.claude/skills`），无需 clone 仓库：
+
+**macOS / Linux**
+
+```bash
+mkdir -p ~/.claude/skills && \
+curl -L https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip -o /tmp/skill.zip && \
+unzip -oq /tmp/skill.zip -d ~/.claude/skills && rm /tmp/skill.zip
+```
+
+**Windows（PowerShell）**
+
+```powershell
+$dst = "$env:USERPROFILE\.claude\skills"
+New-Item -ItemType Directory -Force -Path $dst | Out-Null
+Invoke-WebRequest "https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip" -OutFile "$env:TEMP\skill.zip"
+Expand-Archive "$env:TEMP\skill.zip" -DestinationPath $dst -Force
+```
+
+WorkBuddy 用户把目标目录换成 `~/.workbuddy/skills`（Windows：`$env:USERPROFILE\.workbuddy\skills`）。装完重载技能列表或重启会话，Agent 就能发现它。
+
+已经 clone 了仓库的话，也可以直接从源码目录复制：
+
+```bash
+mkdir -p ~/.claude/skills && cp -r skills/pdf-seal-stamp-lite ~/.claude/skills/
+```
+
+```powershell
+Copy-Item -Recurse skills\pdf-seal-stamp-lite "$env:USERPROFILE\.claude\skills\"
+```
+
+### 用法
 
 ```bash
 python -m pip install "pypdf>=6.0"
@@ -51,7 +86,7 @@ python skills/pdf-seal-stamp-lite/scripts/stamp.py apply  --seal path/to/seal.pd
 python skills/pdf-seal-stamp-lite/scripts/stamp.py verify --seal path/to/seal.pdf --file path/to/已签章/drawing.pdf --json
 ```
 
-把 `skills/pdf-seal-stamp-lite/` 放进你的 skills 目录即可被 Agent 自动发现；Release 另附 `pdf-seal-stamp-lite-skill.zip`。四个子命令都支持 `--json`，退出码 0 / 1 / 2 分别表示成功、出错、校验不通过。
+装在 skills 目录时，把路径换成 `~/.claude/skills/pdf-seal-stamp-lite/scripts/stamp.py`。四个子命令都支持 `--json`，退出码 0 / 1 / 2 分别表示成功、出错、校验不通过。
 
 ## 三条铁律
 
