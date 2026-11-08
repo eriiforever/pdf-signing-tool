@@ -44,9 +44,29 @@ python src/stamp_gui.py
 
 `skills/pdf-seal-stamp-lite/` 是给 Agent 调用的零依赖 CLI 技能，**不含任何章文件**，章由使用者通过 `--seal` 传入。
 
-### 一键安装
+| 安装包 | 版本 | 更新 | 适配 |
+|---|---|---|---|
+| `pdf-seal-stamp-lite-skill.zip`（9.7 KB） | 1.0.0 | 2026-11-08 | Windows / macOS / Linux，Python 3.9+ |
 
-装到 Claude Code / Claude 的 skills 目录（`~/.claude/skills`），无需 clone 仓库：
+### 让 AI 助手帮你装（推荐）
+
+把下面这段整段复制给你的 AI 助手（Claude Code、Cursor、WorkBuddy 都行），它会自己下载、解压、校验并装到正确的目录，装完还会告诉你装在哪：
+
+```
+帮我安装这个 Agent Skill：
+https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip
+
+要求：
+1. 下载后解压，确认目录里有 SKILL.md、scripts/stamp.py、references/params.md；
+2. 装到我的 skills 目录（Claude Code 用 ~/.claude/skills，WorkBuddy 用 ~/.workbuddy/skills），
+   最终路径应为 <skills>/pdf-seal-stamp-lite/；
+3. 顺手执行 python -m pip install "pypdf>=6.0"；
+4. 装完告诉我完整的安装路径。
+```
+
+### 手动安装
+
+自己装到 Claude Code / Claude 的 skills 目录（`~/.claude/skills`），无需 clone 仓库：
 
 **macOS / Linux**
 
