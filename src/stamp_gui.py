@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-PDF 盖章工具 · 图形界面版 v2.1
+PDF 盖章工具 · 图形界面版 v2.2
 =====================================================================
 正式交付是单文件 exe（PyInstaller 打包），双击就是原生窗口：
 不装 Python、不装 Qt、不开浏览器、没有黑框，关窗即退出。
@@ -59,7 +59,7 @@ BACKUP_DIRNAME = "_未盖章原件"
 SEALS_DIR = os.path.join(APP_DIR, "seals")
 BUILTIN_SEAL = os.path.join(BUNDLE_DIR, "示意章-测试.pdf")
 PAGE_ALL, PAGE_FIRST = "all", "first"
-VERSION = "2.1"                          # 同步维护 version_info.txt 中的文件版本
+VERSION = "2.2"                          # 同步维护 version_info.txt 中的文件版本
 
 
 # --------------------------------------------------------------------------- #
@@ -205,6 +205,77 @@ def validate_pages(spec):
                 raise ValueError("页码范围不对：" + part)
         elif int(part) < 1:
             raise ValueError("页码不对：" + part)
+
+
+def enable_file_drop(root, on_paths):
+    """Windows：把顶层窗口注册为文件拖放目标（WM_DROPFILES），零第三方依赖。
+    拖进来的路径通过 on_paths(list) 回调；失败时返回 None，界面其它功能不受影响。
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u, s = ctypes.windll.user32, ctypes.windll.shell32
+        HWND = wintypes.HWND
+        u.GetAncestor.argtypes = [HWND, ctypes.c_uint]
+        u.GetAncestor.restype = HWND
+        u.GetWindowLongPtrW.argtypes = [HWND, ctypes.c_int]
+        u.GetWindowLongPtrW.restype = ctypes.c_void_p
+        u.SetWindowLongPtrW.argtypes = [HWND, ctypes.c_int, ctypes.c_void_p]
+        u.SetWindowLongPtrW.restype = ctypes.c_void_p
+        u.CallWindowProcW.argtypes = [ctypes.c_void_p, HWND, ctypes.c_uint,
+                                      wintypes.WPARAM, wintypes.LPARAM]
+        u.CallWindowProcW.restype = ctypes.c_ssize_t
+        s.DragAcceptFiles.argtypes = [HWND, wintypes.BOOL]
+        s.DragQueryFileW.argtypes = [ctypes.c_void_p, ctypes.c_uint,
+                                     wintypes.LPWSTR, ctypes.c_uint]
+        s.DragQueryFileW.restype = ctypes.c_uint
+        s.DragFinish.argtypes = [ctypes.c_void_p]
+
+        hwnd = u.GetAncestor(root.winfo_id(), 2)          # GA_ROOT 顶层窗口
+        if not hwnd:
+            return None
+        s.DragAcceptFiles(hwnd, True)
+        WM_DROPFILES, GWL_WNDPROC = 0x0233, -4
+        WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, HWND, ctypes.c_uint,
+                                     wintypes.WPARAM, wintypes.LPARAM)
+        old = u.GetWindowLongPtrW(hwnd, GWL_WNDPROC)
+
+        def proc(h, msg, wp, lp):
+            if msg == WM_DROPFILES:
+                hdrop = ctypes.c_void_p(wp)
+                paths = []
+                count = s.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+                for i in range(count):
+                    buf = ctypes.create_unicode_buffer(1024)
+                    s.DragQueryFileW(hdrop, i, buf, 1024)
+                    paths.append(buf.value)
+                s.DragFinish(hdrop)
+                try:
+                    root.after_idle(lambda: on_paths(paths))
+                except Exception:
+                    pass
+                return 0
+            return u.CallWindowProcW(ctypes.c_void_p(old), h, msg, wp, lp)
+
+        cb = WNDPROC(proc)
+        u.SetWindowLongPtrW(hwnd, GWL_WNDPROC, ctypes.cast(cb, ctypes.c_void_p))
+        return {"hwnd": hwnd, "old": old, "callback": cb, "dispatch": proc}
+    except Exception:
+        return None
+
+
+def restore_file_drop(dnd):
+    """关闭窗口前还原原窗口过程，避免回调对象被回收后崩溃。"""
+    if not dnd:
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.SetWindowLongPtrW(
+            dnd["hwnd"], -4, ctypes.c_void_p(dnd["old"]))
+    except Exception:
+        pass
 
 
 def expand_files(items):
@@ -468,7 +539,7 @@ def run_gui(preset_files=None, selftest=False):
                       foreground="#888").pack(anchor="w", pady=(6, 0))
 
             # 2. 文件
-            g2 = ttk.LabelFrame(f, text=" 2  待盖章图纸（可多选，支持混合图幅） ", padding=8)
+            g2 = ttk.LabelFrame(f, text=" 2  待盖章图纸（可直接把 PDF 或文件夹拖进窗口） ", padding=8)
             g2.pack(fill="both", expand=True, pady=(0, 8))
             bar = ttk.Frame(g2)
             bar.pack(fill="x", pady=(0, 6))
@@ -551,6 +622,8 @@ def run_gui(preset_files=None, selftest=False):
             self.log("PDF 盖章工具 v{}  ·  就绪".format(VERSION))
             self.log("换章：把整幅透明章 PDF 放进 seals\\ 或与图纸同目录（文件名带「章」），或点「浏览」选择。")
             self.refresh_seals(verbose=True)   # 控件齐备后再填充下拉、写日志
+            root.update_idletasks()
+            self._dnd = enable_file_drop(root, self.on_drop_files)
             self.root.after(100, self.poll)
 
         # ---- 小工具 ----
@@ -599,6 +672,20 @@ def run_gui(preset_files=None, selftest=False):
                 self.seal_map.setdefault(label, p)
                 self.seal_box["values"] = list(self.seal_map.keys())
                 self.seal_var.set(label)
+
+        def on_drop_files(self, paths):
+            """窗口内拖放：路径可以是 PDF，也可以是装 PDF 的文件夹。"""
+            got = []
+            for p in paths:
+                if os.path.isdir(p):
+                    got.extend(sorted(glob.glob(os.path.join(p, "*.pdf"))))
+                elif p.lower().endswith(".pdf") and os.path.isfile(p):
+                    got.append(os.path.abspath(p))
+            self.add_paths(got)
+            if got:
+                self.log("拖入 {} 个 PDF".format(len(got)))
+            elif paths:
+                self.log("拖入的内容里没有可用的 PDF")
 
         def add_paths(self, paths):
             for p in paths:
@@ -777,8 +864,10 @@ def run_gui(preset_files=None, selftest=False):
                 if self.mb.askyesno(
                         "正在盖章",
                         "当前批次尚未确认结束。\n\n若日志显示已全部盖章完成，可强制退出。\n\n确定强制退出吗？"):
+                    restore_file_drop(getattr(self, "_dnd", None))
                     self.root.destroy()
                 return
+            restore_file_drop(getattr(self, "_dnd", None))
             self.root.destroy()
 
     root = tk.Tk()
@@ -797,6 +886,44 @@ def run_gui(preset_files=None, selftest=False):
         app.q.put(("done", (2, [])))
         app.poll()
         status.append("DONE OK busy=%s go=%s" % (app.busy, str(app.go["state"])))
+        # 窗口内拖放回归：构造真实 HDROP 投递 WM_DROPFILES，验证路径进入文件列表
+        drop_path = next((a for a in sys.argv[1:]
+                          if a.lower().endswith(".pdf") and os.path.isfile(a)), None)
+        dnd = getattr(app, "_dnd", None)
+        if dnd and drop_path:
+            try:
+                import ctypes
+
+                class POINT(ctypes.Structure):
+                    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+                class DROPFILES(ctypes.Structure):
+                    _fields_ = [("pFiles", ctypes.c_uint), ("pt", POINT),
+                                ("fNC", ctypes.c_int), ("fWide", ctypes.c_int)]
+
+                text = os.path.abspath(drop_path) + "\0\0"
+                raw = text.encode("utf-16-le")
+                size = ctypes.sizeof(DROPFILES) + len(raw)
+                k = ctypes.windll.kernel32
+                k.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+                k.GlobalAlloc.restype = ctypes.c_void_p
+                k.GlobalLock.argtypes = [ctypes.c_void_p]
+                k.GlobalLock.restype = ctypes.c_void_p
+                k.GlobalUnlock.argtypes = [ctypes.c_void_p]
+                hg = k.GlobalAlloc(0x0042, size)
+                ptr = k.GlobalLock(hg)
+                df = DROPFILES.from_address(ptr)
+                df.pFiles = ctypes.sizeof(DROPFILES)
+                df.fWide = 1
+                ctypes.memmove(ptr + ctypes.sizeof(DROPFILES), raw, len(raw))
+                k.GlobalUnlock(hg)
+                dnd["dispatch"](dnd["hwnd"], 0x0233, hg, 0)
+                root.update()
+                status.append("DROP OK files=%d" % len(app.files))
+            except Exception as e:
+                status.append("DROP FAIL %s" % e)
+        else:
+            status.append("DROP FAIL not-registered")
         try:                                  # 真实跑一遍盖章链路，验证 exe 内依赖完整
             import tempfile
             seals = list_seals()

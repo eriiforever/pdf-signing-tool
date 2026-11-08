@@ -12,21 +12,22 @@
 
 ## 版本
 
-当前版本 **v2.1**。窗口标题、界面、启动日志、`--version` 与 exe 的 Windows 文件属性（FileVersion 2.1.0.0 / ProductVersion 2.1）都写入了版本号；升级时请同步修改 `src/stamp_gui.py` 的 `VERSION` 常量与 `tools/version_info.txt`。
+当前版本 **v2.2**。窗口标题、界面、启动日志、`--version` 与 exe 的 Windows 文件属性（FileVersion 2.2.0.0 / ProductVersion 2.2）都写入了版本号；升级时请同步修改 `src/stamp_gui.py` 的 `VERSION` 常量与 `tools/version_info.txt`。
 
 | 版本 | 形态 | 说明 |
 |---|---|---|
 | v1.0 | 网页版 | 本地 HTTP 服务 + 内嵌 HTML 页面 + 浏览器；单文件 exe。已知问题：文件框层级、输出目录、关窗行为 |
 | v2.0 | 独立窗口 | 首次脱离浏览器，tkinter 原生窗口 + pypdf，单文件 exe，不用装 Python |
-| **v2.1** | **当前** | 同目录章自动发现、同名文件三策略、完成后打开输出文件夹、日志区弹性布局、内置脱敏示意章 |
+| v2.1 | 稳定版 | 同目录章自动发现、同名文件三策略、完成后打开输出文件夹、日志区弹性布局、内置脱敏示意章 |
+| **v2.2** | **当前** | 窗口内直接拖入 PDF / 文件夹添加、版本号 2.2 |
 
 详见 [CHANGELOG.md](CHANGELOG.md)、`releases/` 与 `history/`。
 
 ## 快速开始
 
-- **直接用**：下载 v2.1 Release 附件 `PDFStamp-v2.1.exe`，双击即用；本地也交付了同名文件。
+- **直接用**：下载 v2.2 Release 附件 `PDFStamp-v2.2.exe`，双击即用；本地也交付了同名文件。
 - **源码运行**：需 Python 3.9+ 且带 tkinter，`pip install -r src/requirements.txt`，然后 `python src/stamp_gui.py`。
-- **拖拽**：把 PDF 拖到程序图标或 `src/stamp.bat` 上，自动带入文件列表或按默认设置盖章。
+- **窗口内拖拽**：把 PDF 或整个文件夹从资源管理器直接拖进程序窗口，自动加入待盖章列表；也可拖到程序图标上启动。
 - **自行打包**：见 `tools/build_exe.md`。
 - **生成示意章**：`python tools/make_sample_seal.py`（需 Pillow 与 pypdf）。
 

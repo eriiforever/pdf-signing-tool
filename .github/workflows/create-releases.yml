@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Create v1.0 v2.0 v2.1 releases
+      - name: Create v1.0 v2.0 v2.1 v2.2 releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for v in v1.0 v2.0 v2.1; do
+          for v in v1.0 v2.0 v2.1 v2.2; do
             if gh release view "$v" >/dev/null 2>&1; then
               gh release edit "$v" --notes-file "releases/$v.md"
               echo "$v notes synced"
@@ -31,7 +31,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for v in v1.0 v2.0 v2.1; do
+          for v in v1.0 v2.0 v2.1 v2.2; do
             gh release view "$v" --json assets --jq '.assets[].name' | while IFS= read -r name; do
               case "$name" in *.exe) gh release delete-asset "$v" "$name" -y ;; esac
             done
@@ -42,6 +42,7 @@ jobs:
               *v1.0.exe) tag=v1.0 ;;
               *v2.0.exe) tag=v2.0 ;;
               *v2.1.exe) tag=v2.1 ;;
+              *v2.2.exe) tag=v2.2 ;;
               *) continue ;;
             esac
             gh release upload "$tag" "$f" --clobber
