@@ -2,9 +2,9 @@
 
 把「整幅图幅大小的透明章图层 PDF」1:1 叠加到工程图纸或报告上，配一个开箱即用的图形界面程序，另带一套给 AI 调用的零依赖命令行技能。
 
-`v3.0` · Windows · MIT · 仓库内不含任何真实印章、图纸、单位或项目信息
+`v2.3` · Windows · MIT · 仓库内不含任何真实印章、图纸、单位或项目信息
 
-[下载 v3.0 程序](https://github.com/eriiforever/pdf-signing-tool/releases/download/v3.0/PDFStamp-v3.0.exe) · [下载 AI 技能包](https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip) · [所有版本](https://github.com/eriiforever/pdf-signing-tool/releases)
+[下载 v2.3 程序](https://github.com/eriiforever/pdf-signing-tool/releases/download/v2.3/PDFStamp-v2.3.exe) · [下载 AI 技能包](https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip) · [所有版本](https://github.com/eriiforever/pdf-signing-tool/releases)
 
 ## 能做什么
 
@@ -30,7 +30,7 @@
 
 ## 快速开始
 
-**直接用**：下载 [PDFStamp-v3.0.exe](https://github.com/eriiforever/pdf-signing-tool/releases/download/v3.0/PDFStamp-v3.0.exe)，双击运行；把 PDF 或文件夹拖进窗口即可添加。其它版本见 [Releases](https://github.com/eriiforever/pdf-signing-tool/releases)。
+**直接用**：下载 [PDFStamp-v2.3.exe](https://github.com/eriiforever/pdf-signing-tool/releases/download/v2.3/PDFStamp-v2.3.exe)，双击运行；把 PDF 或文件夹拖进窗口即可添加。其它版本见 [Releases](https://github.com/eriiforever/pdf-signing-tool/releases)。
 
 **从源码运行**：
 
@@ -124,7 +124,7 @@ python skills/pdf-seal-stamp-lite/scripts/stamp.py verify --seal path/to/seal.pd
 ## 目录
 
 ```
-src/       v3.0 图形界面源码（单文件 stamp_gui.py + 启动器）
+src/       v2.3 图形界面源码（单文件 stamp_gui.py + 启动器）
 skills/    AI 技能 pdf-seal-stamp-lite（零依赖 CLI）
 tools/     示意章 / 图标生成脚本、打包说明、版本资源
 docs/      盖章规则、参数换算与踩坑记录

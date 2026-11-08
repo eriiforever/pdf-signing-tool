@@ -65,7 +65,7 @@ SEALS_DIR = os.path.join(APP_DIR, "seals")
 BUILTIN_SEAL = os.path.join(BUNDLE_DIR, "示意章-测试.pdf")
 CONFIG_PATH = os.path.join(APP_DIR, "stamp_config.json")
 PAGE_ALL, PAGE_FIRST = "all", "first"
-VERSION = "3.0"                          # 同步维护 version_info.txt 中的文件版本
+VERSION = "2.3"                          # 同步维护 version_info.txt 中的文件版本
 
 DEFAULT_CONFIG = {
     "seal": "",             # 上次使用的章图层
