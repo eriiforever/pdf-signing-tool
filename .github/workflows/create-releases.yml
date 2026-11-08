@@ -26,10 +26,15 @@ jobs:
               echo "created $v"
             fi
           done
-      - name: Attach the v2.1 executable to its release
+      - name: Refresh the v2.1 executable asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          gh release view v2.1 --json assets --jq '.assets[].name' | while IFS= read -r name; do
+            case "$name" in
+              *.exe) gh release delete-asset v2.1 "$name" -y ;;
+            esac
+          done
           for f in dist/*.exe; do
             [ -e "$f" ] || continue
             gh release upload v2.1 "$f" --clobber

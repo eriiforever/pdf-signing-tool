@@ -24,7 +24,7 @@
 
 ## 快速开始
 
-- **直接用**：下载 v2.1 Release 附件 `PDF盖章工具-v2.1.exe`，双击即用；本地也交付了同名文件。
+- **直接用**：下载 v2.1 Release 附件 `PDFStamp-v2.1.exe`，双击即用；本地也交付了同名文件。
 - **源码运行**：需 Python 3.9+ 且带 tkinter，`pip install -r src/requirements.txt`，然后 `python src/stamp_gui.py`。
 - **拖拽**：把 PDF 拖到程序图标或 `src/stamp.bat` 上，自动带入文件列表或按默认设置盖章。
 - **自行打包**：见 `tools/build_exe.md`。
