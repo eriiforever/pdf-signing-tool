@@ -48,3 +48,13 @@ jobs:
             gh release upload "$tag" "$f" --clobber
             echo "uploaded $f -> $tag"
           done
+
+      - name: Package and upload the AI skill
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd skills
+          zip -qr ../dist/pdf-seal-stamp-lite-skill.zip pdf-seal-stamp-lite
+          cd ..
+          gh release upload v2.2 dist/pdf-seal-stamp-lite-skill.zip --clobber
+          echo "uploaded skill zip"

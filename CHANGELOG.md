@@ -2,6 +2,7 @@
 
 ## v2.2（当前）
 
+- 新增 `skills/pdf-seal-stamp-lite`：零依赖 AI 技能（`inspect/apply/verify/restore`、`--json`、退出码 0/1/2），不内置任何章文件，章由使用者提供；Release 附 `pdf-seal-stamp-lite-skill.zip`。
 - 修复：拖入文件后程序闪退（窗口过程里调用了 Tk 的 `after_idle`，在 Windows 消息循环中重入 Tcl 导致崩溃）；改为窗口过程只把路径入队，由 Tk 侧轮询消费，并给窗口过程加异常兜底。
 - 窗口内直接拖放：把 PDF 或文件夹从资源管理器拖进窗口，自动加入待盖章列表；用 Windows 原生 `WM_DROPFILES` + ctypes 实现，纯标准库、零新增依赖，失败时静默降级不影响其它功能。
 - 拖入文件夹自动展开其中的 PDF，并沿用同目录章自动发现。

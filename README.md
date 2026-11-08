@@ -31,14 +31,27 @@
 - **自行打包**：见 `tools/build_exe.md`。
 - **生成示意章**：`python tools/make_sample_seal.py`（需 Pillow 与 pypdf）。
 
+## AI 技能
+
+`skills/pdf-seal-stamp-lite/` 是给 Agent 调用的零依赖 CLI 技能，**不含任何章文件**，章由使用者通过 `--seal` 传入：
+
+```bash
+python -m pip install "pypdf>=6.0"
+python skills/pdf-seal-stamp-lite/scripts/stamp.py inspect --seal path/to/seal.pdf --target path/to/drawing.pdf --json
+python skills/pdf-seal-stamp-lite/scripts/stamp.py apply  --seal path/to/seal.pdf --target path/to/drawing.pdf --json
+python skills/pdf-seal-stamp-lite/scripts/stamp.py verify --seal path/to/seal.pdf --file path/to/已签章/drawing.pdf --json
+```
+
+把 `skills/pdf-seal-stamp-lite/` 整个目录放进你的 skills 目录即可被 Agent 自动发现；Release 另附 `pdf-seal-stamp-lite-skill.zip`。所有命令支持 `--json`，退出码 0/1/2。
+
 ## 目录
 
 ```
-src/         v2.1 图形界面源码
+src/         v2.2 图形界面源码
 tools/       示意章、图标的生成脚本与打包说明
 samples/     示意章生成结果（运行脚本后得到）
 docs/        盖章规则、等效参数与踩坑记录
-skill/       早期命令行版本（pdf-seal-stamp 技能，inspect/apply/verify/restore）
+skills/      AI 技能 pdf-seal-stamp-lite（零依赖 CLI：inspect/apply/verify/restore）
 history/     各版本归档说明与未完成的实验源码
 releases/    v1.0 / v2.0 / v2.1 的发布说明
 dist/        三个版本的可执行文件（同时挂在各自 Release 上）
