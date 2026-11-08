@@ -67,6 +67,8 @@ Expand-Archive "$env:TEMP\skill.zip" -DestinationPath $dst -Force
 
 WorkBuddy 用户把目标目录换成 `~/.workbuddy/skills`（Windows：`$env:USERPROFILE\.workbuddy\skills`）。装完重载技能列表或重启会话，Agent 就能发现它。
 
+链接走 GitHub 的 `releases/latest`，始终指向最新正式版；如需锁定版本，把 URL 里的 `latest` 换成 `v2.2`。zip 解压后就是 `pdf-seal-stamp-lite/` 目录，直接落在 skills 目录下。
+
 已经 clone 了仓库的话，也可以直接从源码目录复制：
 
 ```bash
