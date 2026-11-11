@@ -1,8 +1,8 @@
-# v2.1 源码
+# v2.4 源码
 
 - `stamp_gui.py`：主程序。双击/拖拽入口、tkinter 窗口、盖章核心、校验、同名策略都在这一文件。
 - `stamp.bat`：Windows 启动器。双击开窗口，把 PDF 拖到 bat 上按默认设置直盖。
-- `requirements.txt`：运行依赖。
+- `requirements.txt`：运行依赖（`pypdf`）。预览另需 `pypdfium2` 与 `Pillow`，缺了会自动降级。
 
 运行：
 
@@ -16,4 +16,4 @@ python stamp_gui.py a.pdf b.pdf --pages first --out stamped
 
 内置示意章由 `tools/make_sample_seal.py` 生成，打包时用 `--add-data` 嵌入 exe。
 
-版本号：`stamp_gui.py` 的 `VERSION` 常量（当前 2.1）；`tools/version_info.txt` 是打包时写入 exe 文件属性的版本资源，两处需同步修改。
+版本号：`stamp_gui.py` 的 `VERSION` 常量（当前 2.4）；`tools/version_info.txt` 是打包时写入 exe 文件属性的版本资源，两处需同步修改。
