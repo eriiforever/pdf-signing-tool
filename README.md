@@ -2,9 +2,9 @@
 
 把「整幅图幅大小的透明章图层 PDF」1:1 叠加到工程图纸或报告上，配一个开箱即用的图形界面程序，另带一套给 AI 调用的零依赖命令行技能。
 
-`v2.3` · Windows · MIT · 仓库内不含任何真实印章、图纸、单位或项目信息
+`v2.4` · Windows · MIT · 仓库内不含任何真实印章、图纸、单位或项目信息
 
-[下载 v2.3 程序](https://github.com/eriiforever/pdf-signing-tool/releases/download/v2.3/PDFStamp-v2.3.exe) · [下载 AI 技能包](https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip) · [所有版本](https://github.com/eriiforever/pdf-signing-tool/releases)
+[下载 v2.4 程序](https://github.com/eriiforever/pdf-signing-tool/releases/download/v2.4/PDFStamp-v2.4.exe) · [下载 AI 技能包](https://github.com/eriiforever/pdf-signing-tool/releases/latest/download/pdf-seal-stamp-lite-skill.zip) · [所有版本](https://github.com/eriiforever/pdf-signing-tool/releases)
 
 ## 能做什么
 
@@ -16,6 +16,8 @@
 - 盖章前可预览首页叠章效果；可选择跳过已经盖过这枚章的页（默认关闭），勾选后重跑不会叠第二层
 - 章位 dx/dy 微调并记住上次设置；换章自动套用该章记下的页码策略
 - 可勾选生成 `盖章报告_时间.txt`（默认关闭），交付留痕
+- 从已签章图纸里提取本单位电子章，原样搬出图像流与透明遮罩，字节一致
+- 混合图幅自适配：A2 及以上落位与旧版完全一致，A3/A4/加长图不再漏章
 
 ## 版本
 
@@ -25,13 +27,14 @@
 | [v2.0](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.0) | 独立窗口 | 首次脱离浏览器，tkinter 原生窗口 + pypdf，单文件 exe，目标机无需 Python |
 | [v2.1](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.1) | 稳定版 | 同目录章自动发现、同名文件三策略、完成后打开输出文件夹、日志区弹性布局 |
 | [v2.2](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.2) | 稳定版 | 窗口内直接拖入 PDF / 文件夹；零依赖 AI 技能 |
-| **[v2.3](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.3)** | **当前** | 盖章前预览、可选跳过已盖章页、章位微调、配置记忆、可选 txt 报告、CI 回归测试 |
+| [v2.3](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.3) | 稳定版 | 盖章前预览、可选跳过已盖章页、章位微调、配置记忆、可选 txt 报告、CI 回归测试 |
+| **[v2.4](https://github.com/eriiforever/pdf-signing-tool/releases/tag/v2.4)** | **当前** | 电子章提取（字节一致）、小图幅漏章修复、旋转页处理 |
 
 各版本的变更明细见 [CHANGELOG.md](CHANGELOG.md)，发布说明在 `releases/`，已停止维护的实现在 `history/`。
 
 ## 快速开始
 
-**直接用**：下载 [PDFStamp-v2.3.exe](https://github.com/eriiforever/pdf-signing-tool/releases/download/v2.3/PDFStamp-v2.3.exe)，双击运行；把 PDF 或文件夹拖进窗口即可添加。其它版本见 [Releases](https://github.com/eriiforever/pdf-signing-tool/releases)。
+**直接用**：下载 [PDFStamp-v2.4.exe](https://github.com/eriiforever/pdf-signing-tool/releases/download/v2.4/PDFStamp-v2.4.exe)，双击运行；把 PDF 或文件夹拖进窗口即可添加。其它版本见 [Releases](https://github.com/eriiforever/pdf-signing-tool/releases)。
 
 **从源码运行**：
 

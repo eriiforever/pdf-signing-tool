@@ -18,11 +18,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release delete v3.0 --yes --cleanup-tag || true
-      - name: Create v1.0 v2.0 v2.1 v2.2 v2.3 releases
+      - name: Create v1.0 v2.0 v2.1 v2.2 v2.3 v2.4 releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for v in v1.0 v2.0 v2.1 v2.2 v2.3; do
+          for v in v1.0 v2.0 v2.1 v2.2 v2.3 v2.4; do
             if gh release view "$v" >/dev/null 2>&1; then
               gh release edit "$v" --notes-file "releases/$v.md"
               echo "$v notes synced"
@@ -41,19 +41,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view v2.3 --json assets --jq '.assets[].name' | while IFS= read -r name; do
+          gh release view v2.4 --json assets --jq '.assets[].name' | while IFS= read -r name; do
             case "$name" in
-              *.exe|*.zip) gh release delete-asset v2.3 "$name" -y ;;
+              *.exe|*.zip) gh release delete-asset v2.4 "$name" -y ;;
             esac
           done
-          gh release upload v2.3 dist/PDFStamp-v2.3.exe --clobber
-          gh release upload v2.3 dist/pdf-seal-stamp-lite-skill.zip --clobber
-          echo "uploaded v2.3 assets"
+          gh release upload v2.4 dist/PDFStamp-v2.4.exe --clobber
+          gh release upload v2.4 dist/pdf-seal-stamp-lite-skill.zip --clobber
+          echo "uploaded v2.4 assets"
       - name: Write and upload checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd dist
-          sha256sum PDFStamp-v2.3.exe pdf-seal-stamp-lite-skill.zip > checksums.txt
+          sha256sum PDFStamp-v2.4.exe pdf-seal-stamp-lite-skill.zip > checksums.txt
           cat checksums.txt
-          gh release upload v2.3 checksums.txt --clobber
+          gh release upload v2.4 checksums.txt --clobber

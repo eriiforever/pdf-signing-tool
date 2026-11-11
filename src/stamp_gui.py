@@ -48,6 +48,8 @@ if os.path.isdir(VENDOR):
 
 try:
     from pypdf import PdfReader, PdfWriter, Transformation
+    from pypdf.generic import (ArrayObject, DecodedStreamObject, DictionaryObject,
+                               EncodedStreamObject, NameObject, NumberObject)
 except ImportError:
     sys.exit("缺少 pypdf：请确认 _vendor/pypdf 完整，或执行 pip install pypdf")
 
@@ -65,7 +67,7 @@ SEALS_DIR = os.path.join(APP_DIR, "seals")
 BUILTIN_SEAL = os.path.join(BUNDLE_DIR, "示意章-测试.pdf")
 CONFIG_PATH = os.path.join(APP_DIR, "stamp_config.json")
 PAGE_ALL, PAGE_FIRST = "all", "first"
-VERSION = "2.3"                          # 同步维护 version_info.txt 中的文件版本
+VERSION = "2.4"                          # 同步维护 version_info.txt 中的文件版本
 
 DEFAULT_CONFIG = {
     "seal": "",             # 上次使用的章图层
@@ -247,6 +249,118 @@ def write_report(rows, dirs, seal="", pages_spec="", dx=0.0, dy=0.0):
         return None
 
 
+_PDF_NUM = r"[-+]?\d*\.?\d+(?:e[-+]?\d+)?"
+_PDF_TOK = re.compile(
+    r"(?P<num>" + _PDF_NUM + r")"
+    r"|(?P<name>/[^\s/\[\]<>(){}%]+)"
+    r"|(?P<op>[A-Za-z'\"*][A-Za-z0-9'\"*]*)"
+    r"|(?P<arr>[\[\]])"
+)
+
+
+def _mat_mul(m, n):
+    """3x2 仿射矩阵相乘：先应用 m，再应用 n。"""
+    a, b, c, d, e, f = m
+    A, B, C, D, E, F = n
+    return [a * A + b * C, a * B + b * D, c * A + d * C, c * B + d * D,
+            a * E + b * F + e, c * E + d * F + f]
+
+
+def _point(m, x, y):
+    """按 PDF 约定变换一个点：X = a*x + c*y + e，Y = b*x + d*y + f。"""
+    a, b, c, d, e, f = m
+    return a * x + c * y + e, b * x + d * y + f
+
+
+def seal_ink_bbox(seal_page, depth=0):
+    """章图层里"章实际画在哪"。返回 (x0, y0, x1, y1)，解析不出返回 None。
+
+    整幅透明层通常远大于章本身：示意章只占右下角一小块，用图层边缘对齐会
+    把小图幅图纸的章推到纸外。这里顺着内容流的 CTM 递归算出所有 XObject 的
+    真实落位，拿到章的墨迹外框。图像天然占 1x1 单位方框（由 cm 缩放），
+    Form 用自身 BBox 并沿用它的 Matrix。
+    """
+    x0 = y0 = 1e9
+    x1 = y1 = -1e9
+
+    def walk(content, xobjs, parent, level):
+        nonlocal x0, y0, x1, y1
+        stack = []
+        ctm = list(parent)
+        nums = []
+        for m in _PDF_TOK.finditer(content):
+            if m.group("num"):
+                nums.append(float(m.group("num")))
+            elif m.group("name"):
+                nums.append(m.group("name"))
+            elif m.group("arr"):
+                continue
+            else:
+                op = m.group("op")
+                if op == "q":
+                    stack.append(list(ctm))
+                elif op == "Q":
+                    if stack:
+                        ctm = stack.pop()
+                elif op == "cm":
+                    v = [x for x in nums if isinstance(x, float)]
+                    if len(v) >= 6:
+                        ctm = _mat_mul(v[-6:], ctm)
+                elif op == "Do":
+                    nm = [x for x in nums if isinstance(x, str)]
+                    if nm and nm[-1] in xobjs:
+                        obj = deref(xobjs[nm[-1]])
+                        is_form = str(deref(obj.get("/Subtype"))) == "/Form"
+                        box = [0, 0, 1, 1]
+                        fmat = [1, 0, 0, 1, 0, 0]
+                        if is_form:
+                            bb = deref(obj.get("/BBox"))
+                            if bb and len(bb) == 4:
+                                box = [float(v) for v in bb]
+                            fm = deref(obj.get("/Matrix"))
+                            if fm and len(fm) >= 6:
+                                fmat = [float(v) for v in fm][:6]
+                        # Form 的 BBox 是自身坐标系，先过它的 Matrix 再进 CTM
+                        eff = _mat_mul(fmat, ctm) if is_form else ctm
+                        for px, py in ((box[0], box[1]), (box[2], box[3])):
+                            X, Y = _point(eff, px, py)
+                            x0, y0 = min(x0, X), min(y0, Y)
+                            x1, y1 = max(x1, X), max(y1, Y)
+                        # Form 里面还有内容：递进它自己的资源树
+                        inner = deref(obj.get("/Contents")) if is_form else None
+                        if inner is not None and level < 6 and hasattr(inner, "get_data"):
+                            sub = deref(obj.get("/Resources"))
+                            walk(inner.get_data().decode("latin-1", "replace"),
+                                 (deref(sub.get("/XObject")) if sub else None) or {},
+                                 eff, level + 1)
+                nums = []
+
+    res = deref(seal_page.get("/Resources"))
+    content_obj = deref(seal_page.get("/Contents"))
+    if content_obj is None:
+        return None
+    # /Contents 可能是单个流，也可能是流数组，统一取成一段文本
+    try:
+        if hasattr(content_obj, "get_data"):
+            text = content_obj.get_data().decode("latin-1", "replace")
+        elif isinstance(content_obj, (list, tuple)):
+            text = "\n".join(deref(x).get_data().decode("latin-1", "replace")
+                             for x in content_obj)
+        else:
+            return None
+    except Exception:
+        return None
+    try:
+        walk(text,
+             (deref(res.get("/XObject")) if res else None) or {},
+             [1, 0, 0, 1, 0, 0], depth)
+    except Exception:
+        return None
+    if x0 == 1e9:
+        return None
+    return (x0, y0, x1, y1)
+
+
 def seal_markers(seal_page):
     """章图层 XObject 的结构指纹（图像宽高 / Form BBox），用于识别"这页已经盖过这枚章"。"""
     res = deref(seal_page.get("/Resources"))
@@ -418,6 +532,215 @@ def restore_file_drop(dnd):
         pass
 
 
+# --------------------------------------------------------------------------- #
+# 从已签章的图纸里提取电子章
+# --------------------------------------------------------------------------- #
+def find_signatures(src):
+    """找出 PDF 里的电子签章（/FT /Sig），返回可提取的章列表。
+
+    每一项：{"page": 页序号(1 基), "name": 签名字段名, "time": 签署时间,
+             "rect": [x0,y0,x1,y1], "size": (宽,高)}
+    只做识别，不动任何字节。
+    """
+    with open(src, "rb") as f:
+        doc = PdfReader(io.BytesIO(f.read()))
+    out = []
+    for pno, page in enumerate(doc.pages, 1):
+        for annot in (deref(page.get("/Annots")) or []):
+            a = deref(annot)
+            if str(deref(a.get("/FT"))) != "/Sig":
+                continue
+            rect = deref(a.get("/Rect"))
+            if not rect or len(rect) != 4:
+                continue
+            r = [float(v) for v in rect]
+            w, h = r[2] - r[0], r[3] - r[1]
+            if w <= 2 or h <= 2:                 # 占位的空签名域，没有章面
+                continue
+            if not deref(a.get("/AP")):           # 没有外观，无从提取
+                continue
+            sig = deref(a.get("/V"))
+            when = ""
+            if sig is not None:
+                when = str(deref(sig.get("/M")) or "")
+            out.append({
+                "page": pno,
+                "name": str(deref(a.get("/T")) or ""),
+                "time": when,
+                "rect": r,
+                "size": (w, h),
+            })
+    return out
+
+
+def _clone_into(writer, obj, memo):
+    """把 obj（含它引用的整棵树）深拷贝进 writer，返回可写入的引用。
+
+    pypdf 的 _add_object 只挂顶层对象，嵌套的 /Resources 之类仍指向原文档，
+    写出来就是空壳；这里手动递归，同一对象只拷一次（memo 去重）。
+    """
+    obj = deref(obj)
+    if obj is None:
+        return None
+    key = id(obj)
+    if key in memo:
+        return memo[key]
+    # 流对象（含 Form XObject、图像）必须先处理：它是字典的子类，
+    # 当字典重建会把 /Contents 的字节丢掉，章就成了空壳。
+    if hasattr(obj, "get_data") and isinstance(obj, DictionaryObject):
+        out = DecodedStreamObject()
+        ref = writer._add_object(out)
+        memo[key] = ref
+        raw = getattr(obj, "_data", None)
+        keep_encoded = (raw is not None
+                        and isinstance(obj, EncodedStreamObject)
+                        and obj.get("/Filter") is not None)
+        for k, v in obj.items():
+            if str(k) in ("/Length", "/P", "/Parent"):
+                continue
+            if keep_encoded and str(k) in ("/Filter", "/DecodeParms"):
+                continue                       # 下面按原编码整体搬回
+            out[NameObject(str(k))] = _clone_into(writer, v, memo)
+        if keep_encoded:
+            # 原流是压缩过的：连 /Filter 带字节原样搬，既不重编码也不膨胀
+            out_filter = obj.get("/Filter")
+            out[NameObject("/Filter")] = _clone_into(writer, out_filter, memo)
+            dp = obj.get("/DecodeParms")
+            if dp is not None:
+                out[NameObject("/DecodeParms")] = _clone_into(writer, dp, memo)
+            out._data = raw
+            out[NameObject("/Length")] = NumberObject(len(raw))
+        else:
+            try:
+                out.set_data(obj.get_data())
+            except Exception:
+                out.set_data(b"")
+        return ref
+    if isinstance(obj, DictionaryObject):
+        out = DictionaryObject()
+        ref = writer._add_object(out)
+        memo[key] = ref
+        for k, v in obj.items():
+            if k in ("/P", "/Parent", "/Annots", "/StructParent"):
+                continue                       # 指回页面/文档的引用不能带过来
+            out[NameObject(str(k))] = _clone_into(writer, v, memo)
+        return ref
+    if isinstance(obj, (list, tuple)):
+        # 数组一律内联：/Mask、/ColorSpace 这类若写成间接引用，
+        # 部分阅读器（含 pdfium）会当成异常结构，整张图渲染成色块。
+        arr = ArrayObject()
+        for v in obj:
+            arr.append(_clone_into(writer, v, memo))
+        return arr
+    if isinstance(obj, (int, float, str, bytes)):
+        return obj
+    # 其余（NumberObject / NameObject / TextStringObject / BooleanObject…）
+    try:
+        return obj.clone(writer)
+    except Exception:
+        return obj
+
+
+def extract_seal(src, rect, layer_w=None, layer_h=None, page_no=1,
+                 log=print):
+    """把一个电子签章的外观原样提成整幅透明章图层，返回 PDF 字节。
+
+    关键点：不渲染、不解码、不重编码。把签名的 /AP /N 外观对象连同它引用的
+    整棵资源树搬进新页面，按原 Rect 落位。原文件的色键遮罩（/Mask）因此
+    完整保留，章的边缘过渡像素一个不丢。
+    """
+    with open(src, "rb") as f:
+        doc = PdfReader(io.BytesIO(f.read()))
+    page = doc.pages[page_no - 1]
+    target = None
+    for annot in (deref(page.get("/Annots")) or []):
+        a = deref(annot)
+        if str(deref(a.get("/FT"))) != "/Sig":
+            continue
+        r = [float(v) for v in (deref(a.get("/Rect")) or [0, 0, 0, 0])]
+        if all(abs(r[i] - rect[i]) < 0.5 for i in range(4)):
+            target = a
+            break
+    if target is None:
+        raise RuntimeError("没找到对应的签章注释")
+
+    ap = deref(target.get("/AP"))
+    apn = deref(ap.get("/N")) if ap else None
+    if apn is None:
+        raise RuntimeError("该签章没有外观对象，无法提取")
+
+    x0, y0, x1, y1 = [float(v) for v in target["/Rect"]]
+    w, h = x1 - x0, y1 - y0
+    pw, ph = float(page.mediabox.width), float(page.mediabox.height)
+    lw = float(layer_w or max(pw, 1689.12))    # 图层尺寸默认跟原页一致
+    lh = float(layer_h or max(ph, 1195.92))
+    log("    章 {:.0f}x{:.0f}pt，原页 {:.0f}x{:.0f} → 图层 {:.0f}x{:.0f}".format(
+        w, h, pw, ph, lw, lh))
+
+    writer = PdfWriter()
+    new_page = writer.add_blank_page(width=lw, height=lh)
+    ref = _clone_into(writer, apn, {})         # 原样搬运整棵外观资源树
+    new_page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/XObject"): DictionaryObject({NameObject("/S1"): ref})
+    })
+    # 外观对象本身就是 w×h 尺寸的画布（Form 的 BBox 就是它），
+    # 落到页面上只需平移，不能再用 cm 缩放，否则章会被放大成色块。
+    tx = lw - w
+    ty = 0.0
+    cs = DecodedStreamObject()
+    cs.set_data(("q 1 0 0 1 %.4f %.4f cm /S1 Do Q" % (tx, ty)).encode("latin-1"))
+    new_page[NameObject("/Contents")] = writer._add_object(cs)
+
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def _is_issue_seal(item):
+    """出图章(约 204x99) / 注册章(约 170x85)：按尺寸判断，排除审图章(约 207x82)。
+    宽高比接近 2:1 的是出图章，接近 2:1 但更小的是注册章；这里简单地用
+    "不是审图章那种扁长条"来筛，宁可多提要用户自己删，也不漏掉该要的。"""
+    w, h = item["size"]
+    ratio = w / h if h else 0
+    return 1.85 <= ratio <= 2.30 and not (90 <= h <= 95 and ratio > 2.4)
+
+
+def seal_suggest_name(src, rect, index=1):
+    """给提取出来的章起个能分清的默认名（从原文件名 + 尺寸推断）。"""
+    stem = os.path.splitext(os.path.basename(src))[0]
+    w, h = rect[2] - rect[0], rect[3] - rect[1]
+    tag = "章%d" % index
+    if abs(h - 99) < 8 and abs(w - 204) < 10:
+        tag = "出图章"
+    elif abs(h - 85) < 8 and abs(w - 170) < 10:
+        tag = "注册章"
+    return "%s-%s-%.0fx%.0f" % (tag, stem, w, h)
+
+
+def extract_seals_to(src, items, out_dir=None, names=None, log=print):
+    """批量提取，返回 [(路径, 字节大小)]。默认写进 seals\\。"""
+    out_dir = out_dir or SEALS_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    saved = []
+    for i, it in enumerate(items):
+        data = extract_seal(src, it["rect"], page_no=it["page"], log=log)
+        nm = (names or {}).get(i) or seal_suggest_name(src, it["rect"], i + 1)
+        nm = re.sub(r'[\\/:*?"<>|]', "_", nm)
+        if not nm.lower().endswith(".pdf"):
+            nm += ".pdf"
+        path = os.path.join(out_dir, nm)
+        k = 2
+        while os.path.exists(path):
+            path = os.path.join(out_dir, "{}_{}{}".format(
+                os.path.splitext(nm)[0], k, ".pdf"))
+            k += 1
+        with open(path, "wb") as f:
+            f.write(data)
+        log("    已保存 {}".format(os.path.basename(path)))
+        saved.append((path, os.path.getsize(path)))
+    return saved
+
+
 def render_preview(src, seal_bytes, dx=0.0, dy=0.0, max_width=900):
     """生成首页叠章预览 PNG。需要 pypdfium2，缺失时返回 None（其它功能不受影响）。"""
     try:
@@ -524,6 +847,12 @@ def stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir, log=print,
     sw, sh = float(seal_page.mediabox.width), float(seal_page.mediabox.height)
     sx0, sy0 = float(seal_page.mediabox.left), float(seal_page.mediabox.bottom)
     log("    章图层 {:.2f} x {:.2f} pt | 共 {} 页".format(sw, sh, len(doc.pages)))
+    # 章在整幅图层里的实际位置。图层通常远大于章，只按图层边缘对齐的话，
+    # 比图层小的图幅（A3/A4/加长图）会把章推出纸外，所以要拿到墨迹外框。
+    ink = seal_ink_bbox(seal_page) or (sx0, sy0, sx0 + sw, sy0 + sh)
+    ix0, iy0, ix1, iy1 = ink
+    log("    章墨迹 {:.1f} x {:.1f} pt @ ({:.1f},{:.1f})".format(
+        ix1 - ix0, iy1 - iy0, ix0, iy0))
 
     idxs = set(parse_pages(pages_spec, len(doc.pages)))
     if markers is None:
@@ -544,10 +873,29 @@ def stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir, log=print,
             log("    p{:<3d} 已有该章，跳过".format(i + 1))
             continue
         pw, ph = float(page.mediabox.width), float(page.mediabox.height)
-        # 整幅图层右下角对齐页面右下角；不缩放、不裁剪、不旋转；dx/dy 为微调
-        tx = (pw - sw) + float(page.mediabox.left) - sx0 + float(dx)
-        ty = (ph - sh) + float(page.mediabox.bottom) - sy0 + float(dy)
+        pl, pb = float(page.mediabox.left), float(page.mediabox.bottom)
         rot = int(deref(page.get("/Rotate")) or 0)
+        # 整幅图层右上角对齐页面右上角；不缩放、不裁剪；dx/dy 为微调
+        tx = (pw - sw) + pl - sx0 + float(dx)
+        ty = (ph - sh) + pb - sy0 + float(dy)
+        # 只有"图幅小于章图层"时才可能把章推出纸面。此时才启用兜底：
+        # 先把页面旋转烘进内容流（否则章会跟着页面躺倒），再把章墨迹的
+        # 右下角拉回页面右下角。图幅不小于图层的（A2 及更大）原样不动。
+        eff_w, eff_h = (ph, pw) if rot % 180 == 90 else (pw, ph)
+        if (eff_w + 0.5 < sw) or (eff_h + 0.5 < sh):
+            if rot % 360:
+                try:
+                    page.transfer_rotation_to_content()
+                    rot = 0
+                    pw, ph = float(page.mediabox.width), float(page.mediabox.height)
+                    pl, pb = float(page.mediabox.left), float(page.mediabox.bottom)
+                except Exception:
+                    pass
+            ntx = (pl + pw) - ix1 + float(dx)
+            nty = pb - iy0 + float(dy)
+            if abs(ntx - tx) > 0.01 or abs(nty - ty) > 0.01:
+                log("    p{:<3d} 图幅小于章层，章按墨迹贴右下角".format(i + 1))
+            tx, ty = ntx, nty
         before = xobj_names(page)
         page.merge_transformed_page(
             seal_page, Transformation().translate(tx, ty),
@@ -668,7 +1016,37 @@ def run_cli(argv):
                      default=False, help="跳过已盖过这枚章的页（默认关）")
     ap.add_argument("--report", action=argparse.BooleanOptionalAction,
                      default=False, help="在输出目录生成 txt 盖章报告（默认关）")
+    ap.add_argument("--extract", metavar="已签章PDF",
+                     help="从这份已签章的图纸里提取电子章，存进 seals\\（不盖章）")
+    ap.add_argument("--extract-all", action="store_true",
+                     help="配合 --extract：连审图章等全部提取（默认只提出图章/注册章）")
     args = ap.parse_args(argv)
+
+    if args.extract:
+        try:
+            log = print
+            items = find_signatures(args.extract)
+            if not items:
+                log("这份 PDF 里没找到电子签章。")
+                return 1
+            log("在 {} 里找到 {} 个电子章：".format(
+                os.path.basename(args.extract), len(items)))
+            for i, it in enumerate(items, 1):
+                log("  {}) 页{} {}  {:.0f}x{:.0f}pt".format(
+                    i, it["page"], it["name"], it["size"][0], it["size"][1]))
+            if not args.extract_all:
+                picked = [it for it in items if _is_issue_seal(it)]
+                if picked:
+                    items = picked
+                    log("  只提出图章/注册章（要全提加 --extract-all）")
+            saved = extract_seals_to(args.extract, items, log=log)
+            log("完成：{} 个，存放在 {}".format(len(saved), SEALS_DIR))
+            for p, sz in saved:
+                log("  {}  ({:.0f} KB)".format(os.path.basename(p), sz / 1024.0))
+            return 0
+        except Exception:
+            traceback.print_exc()
+            return 1
 
     files = expand_files(args.files)
     if not files:
@@ -767,8 +1145,14 @@ def run_gui(preset_files=None, selftest=False):
                        width=6).pack(side="right", padx=6)
             self.seal_box.bind("<Button-1>", lambda e: self.refresh_seals())   # 点开下拉前重扫
             self.seal_box.bind("<<ComboboxSelected>>", self.on_seal_changed)   # 换章时套用它的页码策略
+            row_ext = ttk.Frame(g1)
+            row_ext.pack(fill="x", pady=(6, 0))
+            ttk.Button(row_ext, text="从已签章图纸提取章…", command=self.extract_seal_dialog,
+                       width=22).pack(side="left")
+            ttk.Label(row_ext, text="选一份盖过章的图纸，把你单位自己的电子章提到 seals\\",
+                      foreground="#888").pack(side="left", padx=8)
             ttk.Label(g1, text="自动扫描 seals\\、程序目录及图纸所在目录中带「章」字的 PDF；请确认选的是整幅透明图层",
-                      foreground="#888").pack(anchor="w", pady=(6, 0))
+                      foreground="#888").pack(anchor="w", pady=(4, 0))
 
             # 2. 文件
             g2 = ttk.LabelFrame(f, text=" 2  待盖章图纸（可直接把 PDF 或文件夹拖进窗口） ", padding=8)
@@ -1011,6 +1395,88 @@ def run_gui(preset_files=None, selftest=False):
                 self.seal_map.setdefault(label, p)
                 self.seal_box["values"] = list(self.seal_map.keys())
                 self.seal_var.set(label)
+
+        def extract_seal_dialog(self):
+            """选一份盖过章的图纸，把里面的电子章原样提到 seals\\。"""
+            from tkinter import filedialog
+            p = filedialog.askopenfilename(
+                title="选一份盖过电子章的图纸（从中提取章）",
+                filetypes=[("PDF", "*.pdf")])
+            if not p:
+                return
+            try:
+                items = find_signatures(p)
+            except Exception as e:
+                self.mb.showerror("读取失败", str(e))
+                return
+            if not items:
+                self.mb.showinfo("没找到章",
+                                 "这份 PDF 里没有电子签章。\n\n"
+                                 "只有用电子签章工具盖上去的章才能提取；\n"
+                                 "扫描件或图片贴上去的章没有电子签名，提不出来。")
+                return
+            if not self.confirm_extract(p, items):
+                return
+            try:
+                saved = extract_seals_to(p, items, log=self.log)
+            except Exception as e:
+                self.mb.showerror("提取失败", str(e))
+                return
+            self.refresh_seals()
+            labels = [os.path.basename(sp) for sp, _ in saved]
+            for lab in labels:
+                self.seal_map.setdefault(lab, os.path.join(SEALS_DIR, lab))
+            self.seal_box["values"] = list(self.seal_map.keys())
+            if labels:
+                self.seal_var.set(labels[0])
+                self.on_seal_changed()
+            self.mb.showinfo(
+                "提取完成",
+                "已提取 {} 个章到：\n{}\n\n{}".format(
+                    len(saved), SEALS_DIR, "\n".join(labels)))
+
+        def confirm_extract(self, src, items):
+            """列出识别到的章，让用户勾选要提哪些（默认只勾出图章/注册章）。"""
+            import tkinter as tk
+            from tkinter import ttk as ttk2
+            top = tk.Toplevel(self.root)
+            top.title("选择要提取的章")
+            top.transient(self.root)
+            top.grab_set()
+            top.resizable(False, False)
+            fr = ttk2.Frame(top, padding=12)
+            fr.pack(fill="both", expand=True)
+            ttk2.Label(fr, text="在 {} 中找到 {} 个电子章：".format(
+                os.path.basename(src), len(items))).pack(anchor="w")
+            vars_ = []
+            for i, it in enumerate(items):
+                v = tk.BooleanVar(value=_is_issue_seal(it))
+                vars_.append(v)
+                ttk2.Checkbutton(
+                    fr, variable=v,
+                    text="第 {} 页 · {} · {:.0f}×{:.0f} pt".format(
+                        it["page"], it["name"], it["size"][0], it["size"][1])
+                ).pack(anchor="w", pady=2)
+            ttk2.Label(fr, text="审图章一般不用提取，可自行取消勾选。",
+                       foreground="#888").pack(anchor="w", pady=(6, 0))
+            out = {"ok": False}
+            bar = ttk2.Frame(fr)
+            bar.pack(fill="x", pady=(10, 0))
+
+            def ok():
+                out["ok"] = True
+                top.destroy()
+            ttk2.Button(bar, text="开始提取", command=ok).pack(side="right")
+            ttk2.Button(bar, text="取消", command=top.destroy).pack(side="right", padx=6)
+            self.root.wait_window(top)
+            if not out["ok"]:
+                return False
+            picked = [it for it, v in zip(items, vars_) if v.get()]
+            if not picked:
+                self.mb.showinfo("未选择", "没有勾选任何章。")
+                return False
+            items[:] = picked
+            return True
 
         def on_drop_files(self, paths):
             """窗口内拖放：路径可以是 PDF，也可以是装 PDF 的文件夹。"""
