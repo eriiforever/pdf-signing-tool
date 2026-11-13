@@ -16,16 +16,19 @@ import stamp_gui as core
 
 
 def make_seal(width=1689.12, height=1195.92):
-    """合成一枚整幅透明章图层：内容是一个 Form XObject，放在右下角。"""
+    """合成一枚整幅透明章图层：章画在图层右下角，贴齐两条边（与真实章图层一致）。
+
+    章占 204x79，右边缘 = 图层右边缘，下边缘 = 图层底边。
+    """
     w = PdfWriter()
     page = w.add_blank_page(width=width, height=height)
     form = DecodedStreamObject()
-    form.set_data(b"q 0.8 0.1 0.1 rg 0 0 206 79 re f Q")
+    form.set_data(b"q 0.8 0.1 0.1 rg 0 0 204 79 re f Q")
     form.update({
         NameObject("/Type"): NameObject("/XObject"),
         NameObject("/Subtype"): NameObject("/Form"),
         NameObject("/BBox"): ArrayObject([FloatObject(0), FloatObject(0),
-                                          FloatObject(206), FloatObject(79)]),
+                                          FloatObject(204), FloatObject(79)]),
         NameObject("/Resources"): DictionaryObject(),
     })
     ref = w._add_object(form)
@@ -35,7 +38,7 @@ def make_seal(width=1689.12, height=1195.92):
         page[NameObject("/Resources")] = res
     res[NameObject("/XObject")] = DictionaryObject({NameObject("/Seal0"): ref})
     cs = DecodedStreamObject()
-    cs.set_data(b"q 1 0 0 1 1433 600 cm /Seal0 Do Q")
+    cs.set_data(b"q 1 0 0 1 %.2f 0 cm /Seal0 Do Q" % (width - 204.0))
     page[NameObject("/Contents")] = w._add_object(cs)
     buf = io.BytesIO()
     w.write(buf)
@@ -98,15 +101,15 @@ class CoreTest(unittest.TestCase):
         self.assertTrue(dst2.endswith("drawing_已签章2.pdf"))
 
     def test_ink_bbox(self):
-        """章在整幅图层里的真实落位要能解析出来（示意章只占右下角一小块）。"""
+        """章在整幅图层里的真实落位要能解析出来（章贴齐图层右下角）。"""
         from pypdf import PdfReader
         page = PdfReader(io.BytesIO(self.seal)).pages[0]
         box = core.seal_ink_bbox(page)
         self.assertIsNotNone(box)
-        self.assertAlmostEqual(box[0], 1433.0, places=1)
-        self.assertAlmostEqual(box[1], 600.0, places=1)
-        self.assertAlmostEqual(box[2], 1639.0, places=1)
-        self.assertAlmostEqual(box[3], 679.0, places=1)
+        self.assertAlmostEqual(box[0], 1485.12, places=1)
+        self.assertAlmostEqual(box[1], 0.0, places=1)
+        self.assertAlmostEqual(box[2], 1689.12, places=1)
+        self.assertAlmostEqual(box[3], 79.0, places=1)
 
     def test_ink_bbox_nested_form_matrix(self):
         """Form 自带 Matrix 的章层（AutoCAD 导出常见）：位置要按 Matrix 算，不能落到原点。"""
@@ -158,12 +161,12 @@ class CoreTest(unittest.TestCase):
         out_dir = os.path.join(self.td, "out3")
         _, _, pl, _ = core.stamp_file(
             small, self.seal, "all", "custom", out_dir, log=lambda m: None)
-        # 墨迹 206x79，贴右下角
-        self.assertAlmostEqual(pl[0][3] + 1639.0, 595.0, places=1)
-        self.assertAlmostEqual(pl[0][4] + 600.0, 0.0, places=1)
+        # 墨迹 204x79，贴页面右下角
+        self.assertAlmostEqual(pl[0][3] + 1689.12, 595.0, places=1)
+        self.assertAlmostEqual(pl[0][4] + 0.0, 0.0, places=1)
 
     def test_a2_and_larger_untouched(self):
-        """图幅不小于章图层时（A2 及更大），平移必须与旧公式完全一致。"""
+        """图幅不小于章图层时，图层右下角对齐页面右下角。"""
         out_dir = os.path.join(self.td, "out4")
         _, _, pl, _ = core.stamp_file(
             self.src, self.seal, "all", "custom", out_dir, log=lambda m: None)
@@ -171,6 +174,22 @@ class CoreTest(unittest.TestCase):
             pw = rec[1]
             self.assertAlmostEqual(rec[3], pw - 1689.12, places=2)
             self.assertAlmostEqual(rec[4], 0.0, places=2)
+
+    def test_large_page_seal_at_bottom_right(self):
+        """A1 比章图层大：章仍要贴页面右下角，不能跑到页面中部。
+
+        这是 v2.4 的实际 bug：纵向写成 (ph - sh) 等于右上角对齐，
+        A1 页高 1684、图层高 1195.92，章会浮在距底 488pt 的位置。
+        """
+        a1 = os.path.join(self.td, "a1.pdf")
+        with open(a1, "wb") as f:
+            f.write(make_target([(2384.0, 1684.0)]))
+        out_dir = os.path.join(self.td, "out5")
+        _, _, pl, _ = core.stamp_file(
+            a1, self.seal, "all", "custom", out_dir, log=lambda m: None)
+        tx, ty = pl[0][3], pl[0][4]
+        self.assertAlmostEqual(tx + 1689.12, 2384.0, places=1)   # 贴右边
+        self.assertAlmostEqual(ty + 0.0, 0.0, places=1)          # 贴底边
 
     def test_find_and_extract_seal(self):
         """从带电子签章的图纸里提取章：结构要完整，图像字节要一模一样。"""

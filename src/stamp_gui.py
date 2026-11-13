@@ -67,7 +67,7 @@ SEALS_DIR = os.path.join(APP_DIR, "seals")
 BUILTIN_SEAL = os.path.join(BUNDLE_DIR, "示意章-测试.pdf")
 CONFIG_PATH = os.path.join(APP_DIR, "stamp_config.json")
 PAGE_ALL, PAGE_FIRST = "all", "first"
-VERSION = "2.4"                          # 同步维护 version_info.txt 中的文件版本
+VERSION = "2.5"                          # 同步维护 version_info.txt 中的文件版本
 
 DEFAULT_CONFIG = {
     "seal": "",             # 上次使用的章图层
@@ -847,8 +847,8 @@ def stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir, log=print,
     sw, sh = float(seal_page.mediabox.width), float(seal_page.mediabox.height)
     sx0, sy0 = float(seal_page.mediabox.left), float(seal_page.mediabox.bottom)
     log("    章图层 {:.2f} x {:.2f} pt | 共 {} 页".format(sw, sh, len(doc.pages)))
-    # 章在整幅图层里的实际位置。图层通常远大于章，只按图层边缘对齐的话，
-    # 比图层小的图幅（A3/A4/加长图）会把章推出纸外，所以要拿到墨迹外框。
+    # 章在整幅图层里的实际位置。图层通常远大于章，按图层边缘对齐会让章
+    # 飘到页面中部（图幅比图层大时）或纸外（图幅比图层小时），一律以墨迹为准。
     ink = seal_ink_bbox(seal_page) or (sx0, sy0, sx0 + sw, sy0 + sh)
     ix0, iy0, ix1, iy1 = ink
     log("    章墨迹 {:.1f} x {:.1f} pt @ ({:.1f},{:.1f})".format(
@@ -875,27 +875,26 @@ def stamp_file(src, seal_bytes, pages_spec, out_mode, custom_dir, log=print,
         pw, ph = float(page.mediabox.width), float(page.mediabox.height)
         pl, pb = float(page.mediabox.left), float(page.mediabox.bottom)
         rot = int(deref(page.get("/Rotate")) or 0)
-        # 整幅图层右上角对齐页面右上角；不缩放、不裁剪；dx/dy 为微调
-        tx = (pw - sw) + pl - sx0 + float(dx)
-        ty = (ph - sh) + pb - sy0 + float(dy)
-        # 只有"图幅小于章图层"时才可能把章推出纸面。此时才启用兜底：
-        # 先把页面旋转烘进内容流（否则章会跟着页面躺倒），再把章墨迹的
-        # 右下角拉回页面右下角。图幅不小于图层的（A2 及更大）原样不动。
-        eff_w, eff_h = (ph, pw) if rot % 180 == 90 else (pw, ph)
-        if (eff_w + 0.5 < sw) or (eff_h + 0.5 < sh):
-            if rot % 360:
-                try:
-                    page.transfer_rotation_to_content()
-                    rot = 0
-                    pw, ph = float(page.mediabox.width), float(page.mediabox.height)
-                    pl, pb = float(page.mediabox.left), float(page.mediabox.bottom)
-                except Exception:
-                    pass
-            ntx = (pl + pw) - ix1 + float(dx)
-            nty = pb - iy0 + float(dy)
-            if abs(ntx - tx) > 0.01 or abs(nty - ty) > 0.01:
-                log("    p{:<3d} 图幅小于章层，章按墨迹贴右下角".format(i + 1))
-            tx, ty = ntx, nty
+        # 有 /Rotate 的页先把旋转烘进内容流，否则章会跟着页面躺倒
+        if rot % 360:
+            try:
+                page.transfer_rotation_to_content()
+                rot = 0
+                pw, ph = float(page.mediabox.width), float(page.mediabox.height)
+                pl, pb = float(page.mediabox.left), float(page.mediabox.bottom)
+            except Exception:
+                pass
+        # 整幅图层的右下角对齐页面右下角；不缩放、不裁剪；dx/dy 为微调。
+        # 纵向必须按"纸底"算：旧写法 (ph - sh) 实际是右上角对齐，图幅比
+        # 图层高时（A1/A0）章会落在页面中部，不是右下角。
+        tx = (pl + pw) - (sx0 + sw) + float(dx)
+        ty = pb - sy0 + float(dy)
+        # 安全网：章的墨迹整个落在纸外时，按墨迹拉回右下角（正常章层不会触发）
+        if (ix1 + tx < pl or ix0 + tx > pl + pw
+                or iy1 + ty < pb or iy0 + ty > pb + ph):
+            log("    p{:<3d} 章落在纸外，按墨迹拉回右下角".format(i + 1))
+            tx = (pl + pw) - ix1 + float(dx)
+            ty = pb - iy0 + float(dy)
         before = xobj_names(page)
         page.merge_transformed_page(
             seal_page, Transformation().translate(tx, ty),
@@ -995,7 +994,7 @@ def batch(files, seal_path, pages_spec, out_mode, custom_dir, log=print,
 # --------------------------------------------------------------------------- #
 # 命令行 / 拖拽模式（不需要 tkinter，任何 Python 都能跑）
 # --------------------------------------------------------------------------- #
-def run_cli(argv):
+def run_cli(argv, _log=None):
     ap = argparse.ArgumentParser(
         description="PDF 盖章工具 v{}（拖拽 / 命令行）".format(VERSION))
     ap.add_argument("--version", action="version",
@@ -1024,7 +1023,7 @@ def run_cli(argv):
 
     if args.extract:
         try:
-            log = print
+            log = _log or print
             items = find_signatures(args.extract)
             if not items:
                 log("这份 PDF 里没找到电子签章。")
@@ -1056,7 +1055,7 @@ def run_cli(argv):
         seal = args.seal or default_seal()
         if not os.path.isfile(seal):
             raise RuntimeError("章 PDF 不存在：" + seal)
-        log = print
+        log = _log or print
         log("章：{}".format(seal))
         log("输出：{} | 页码：{} | 同名：{} | 微调：({}, {}) | 跳过已盖：{} | 报告：{}".format(
             args.out, args.pages, args.exists, args.dx, args.dy,
@@ -1862,6 +1861,23 @@ def run_gui(preset_files=None, selftest=False):
     return 0
 
 
+def _cli_capture(argv):
+    """windowed exe 没有控制台：跑完命令行后把输出弹窗显示，别让用户看不到结果。"""
+    buf = []
+
+    def log(*a):
+        buf.append(" ".join(str(x) for x in a))
+
+    code = run_cli(argv, _log=log)
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            0, "\n".join(buf[-40:]) or "（无输出）", "PDF 盖章工具 v" + VERSION, 0x40)
+    except Exception:
+        pass
+    return code
+
+
 def main():
     argv = sys.argv[1:]
     if "--version" in argv:
@@ -1872,8 +1888,12 @@ def main():
         return 0
     if "--selftest" in argv or os.environ.get("STAMP_GUI_SELFTEST"):
         return run_gui(selftest=True)
+    flags = [a for a in argv if a.startswith("--")]
     if FROZEN:
-        # 单文件 exe：双击开空窗口；把 PDF 拖到图标上则自动带入文件列表
+        # 带命令行参数（如 --extract）时走命令行，结果用弹窗显示；
+        # 否则双击开窗，把 PDF 拖到图标上则自动带入文件列表。
+        if flags:
+            return _cli_capture(argv)
         return run_gui(preset_files=expand_files([a for a in argv if os.path.isfile(a)]))
     if argv:
         return run_cli(argv)
